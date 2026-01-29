@@ -1,0 +1,559 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Session 2 – Project Study | DevSphere</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap" rel="stylesheet">
+    <style>
+        :root{
+            --bg1:#0b1220;
+            --bg2:#0a2a43;
+            --card: rgba(255,255,255,.08);
+            --card2: rgba(255,255,255,.06);
+            --border: rgba(255,255,255,.14);
+            --text: rgba(255,255,255,.92);
+            --muted: rgba(255,255,255,.70);
+            --shadow: 0 16px 40px rgba(0,0,0,.45);
+            --radius: 18px;
+            --accent1:#7c3aed; /* violet */
+            --accent2:#06b6d4; /* cyan */
+            --accent3:#22c55e; /* green */
+            --accent4:#f59e0b; /* amber */
+            --accent5:#ef4444; /* red */
+        }
+        *{box-sizing:border-box}
+        html,body{height:100%}
+        body{
+            margin:0;
+            font-family: Inter, system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+            color:var(--text);
+            background:
+                    radial-gradient(1200px 600px at 15% 10%, rgba(124,58,237,.35), transparent 60%),
+                    radial-gradient(1200px 600px at 85% 0%, rgba(6,182,212,.28), transparent 55%),
+                    radial-gradient(900px 500px at 70% 90%, rgba(34,197,94,.22), transparent 60%),
+                    linear-gradient(160deg, var(--bg1), var(--bg2));
+            overflow-x:hidden;
+        }
+        .wrap{
+            width:min(1100px, 92vw);
+            margin: 42px auto 60px;
+        }
+        header{
+            display:flex;
+            flex-direction:column;
+            gap:12px;
+            padding: 28px 28px 22px;
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            background: linear-gradient(180deg, rgba(255,255,255,.10), rgba(255,255,255,.05));
+            box-shadow: var(--shadow);
+            position:relative;
+            overflow:hidden;
+        }
+        header:before{
+            content:"";
+            position:absolute; inset:-2px;
+            background: linear-gradient(90deg, rgba(124,58,237,.35), rgba(6,182,212,.25), rgba(34,197,94,.22));
+            filter: blur(30px);
+            opacity:.55;
+            z-index:0;
+        }
+        header > *{position:relative; z-index:1}
+        .kicker{
+            display:flex; flex-wrap:wrap; gap:10px;
+            font-size:13px;
+            color:var(--muted);
+            align-items:center;
+        }
+        .chip{
+            border:1px solid rgba(255,255,255,.18);
+            background: rgba(255,255,255,.08);
+            padding: 6px 10px;
+            border-radius: 999px;
+            backdrop-filter: blur(8px);
+        }
+        h1{
+            margin:0;
+            font-size: clamp(26px, 3.2vw, 40px);
+            letter-spacing: -0.02em;
+            line-height: 1.15;
+        }
+        .subtitle{
+            margin:0;
+            color:var(--muted);
+            font-size: 15px;
+            line-height: 1.55;
+            max-width: 75ch;
+        }
+
+        /* ✅ One-column layout so accordion matches header width */
+        .grid{
+            display:grid;
+            grid-template-columns: 1fr;
+            gap: 18px;
+            margin-top: 18px;
+        }
+
+        .card{
+            border:1px solid var(--border);
+            border-radius: var(--radius);
+            background: linear-gradient(180deg, var(--card), var(--card2));
+            box-shadow: var(--shadow);
+            overflow:hidden;
+        }
+
+        /* Accordion */
+        .section-title{
+            display:flex; align-items:center; justify-content:space-between;
+            padding: 16px 18px;
+            cursor:pointer;
+            user-select:none;
+            border-bottom: 1px solid rgba(255,255,255,.10);
+            position:relative;
+        }
+        .section-title:hover{background: rgba(255,255,255,.06)}
+        .left{
+            display:flex; align-items:center; gap:12px;
+            min-width:0;
+        }
+        .badge{
+            width:40px; height:40px; border-radius: 14px;
+            display:grid; place-items:center;
+            font-weight:900;
+            letter-spacing:-.02em;
+            border: 1px solid rgba(255,255,255,.18);
+            box-shadow: 0 10px 24px rgba(0,0,0,.28);
+            flex:0 0 auto;
+        }
+        .b1{background: linear-gradient(135deg, rgba(124,58,237,.95), rgba(6,182,212,.65))}
+        .b2{background: linear-gradient(135deg, rgba(6,182,212,.95), rgba(34,197,94,.60))}
+        .b3{background: linear-gradient(135deg, rgba(245,158,11,.95), rgba(239,68,68,.65))}
+        .b4{background: linear-gradient(135deg, rgba(34,197,94,.95), rgba(124,58,237,.60))}
+        .twrap{min-width:0}
+        .section-title h2{
+            margin:0;
+            font-size: 16px;
+            line-height: 1.25;
+            white-space:nowrap;
+            overflow:hidden;
+            text-overflow:ellipsis;
+        }
+        .section-title p{
+            margin: 4px 0 0;
+            font-size: 12px;
+            color: var(--muted);
+            white-space:nowrap;
+            overflow:hidden;
+            text-overflow:ellipsis;
+        }
+        .chev{
+            width:42px; height:42px;
+            border-radius: 14px;
+            display:grid; place-items:center;
+            border:1px solid rgba(255,255,255,.14);
+            background: rgba(255,255,255,.06);
+            transition: transform .25s ease;
+            flex:0 0 auto;
+        }
+        .open .chev{transform: rotate(180deg)}
+        .content{
+            max-height:0;
+            overflow:hidden;
+            transition: max-height .35s ease;
+        }
+        .content .inner{
+            padding: 0 18px 18px;
+            color: rgba(255,255,255,.86);
+            line-height: 1.7;
+            font-size: 14px;
+        }
+
+        ul{margin: 10px 0 0 18px}
+        li{margin: 4px 0}
+        .pillrow{display:flex; flex-wrap:wrap; gap:8px; margin-top:10px}
+        .pill{
+            padding: 6px 10px;
+            border-radius:999px;
+            background: rgba(255,255,255,.07);
+            border:1px solid rgba(255,255,255,.12);
+            font-size:12px;
+            color: rgba(255,255,255,.82);
+        }
+
+        /* Table */
+        table{
+            width:100%;
+            border-collapse:separate;
+            border-spacing:0;
+            overflow:hidden;
+            border-radius: 14px;
+            border:1px solid rgba(255,255,255,.12);
+            margin-top: 12px;
+            font-size: 13px;
+        }
+        th, td{
+            padding: 10px 10px;
+            border-bottom: 1px solid rgba(255,255,255,.10);
+            border-right: 1px solid rgba(255,255,255,.08);
+            vertical-align: top;
+        }
+        th:last-child, td:last-child{border-right:none}
+        tr:last-child td{border-bottom:none}
+        th{
+            text-align:left;
+            color: rgba(255,255,255,.90);
+            background: rgba(255,255,255,.06);
+            font-weight: 700;
+        }
+        td{color: rgba(255,255,255,.80)}
+        .yes{font-weight:800}
+        .btns{
+            display:flex; flex-wrap:wrap; gap:10px; margin-top: 12px;
+        }
+        .btn{
+            display:inline-flex; align-items:center; gap:10px;
+            padding: 10px 12px;
+            border-radius: 14px;
+            border:1px solid rgba(255,255,255,.16);
+            background: rgba(255,255,255,.08);
+            color: var(--text);
+            text-decoration:none;
+            font-weight: 700;
+            font-size: 13px;
+            cursor:pointer;
+        }
+        .btn:hover{background: rgba(255,255,255,.12)}
+        .small{font-size:12px; color:var(--muted); font-weight:600}
+        code{
+            font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+            background: rgba(0,0,0,.25);
+            border: 1px solid rgba(255,255,255,.10);
+            padding: 2px 6px;
+            border-radius: 8px;
+            color: rgba(255,255,255,.88);
+        }
+    </style>
+</head>
+<body>
+<div class="wrap">
+    <header>
+        <div class="kicker">
+            <span class="chip">Session 2 • Project Study</span>
+            <span class="chip">Date: 28/01/2026</span>
+            <span class="chip">Team: <b>DevSphere</b></span>
+        </div>
+        <h1>Multitenant SaaS Platform for Financial Operations & Team Collaboration</h1>
+        <p class="subtitle">
+            <b>Project Description.</b> We are building a cloud-based multitenant SaaS platform dedicated to SMEs.
+            Each company (tenant) has a secure isolated workspace to manage <b>invoices</b>, <b>expenses</b>, <b>clients</b>,
+            and <b>team collaboration</b> using roles, permissions, activity tracking, and notifications.
+            The goal is to centralize financial management, reduce manual work, and improve transparency.
+        </p>
+        <div class="btns">
+            <button class="btn" onclick="expandAll()">
+                <span>Expand all</span><span class="small">show everything</span>
+            </button>
+            <button class="btn" onclick="collapseAll()">
+                <span>Collapse all</span><span class="small">hide details</span>
+            </button>
+        </div>
+    </header>
+
+    <div class="grid">
+        <div class="card">
+            <div class="acc">
+
+                <!-- 1 -->
+                <div class="section" data-acc>
+                    <div class="section-title" role="button" tabindex="0" aria-expanded="false">
+                        <div class="left">
+                            <div class="badge b1">1</div>
+                            <div class="twrap">
+                                <h2>Refined Problem Statement</h2>
+                                <p>Problem → impact → proposed solution</p>
+                            </div>
+                        </div>
+                        <div class="chev" aria-hidden="true">⌄</div>
+                    </div>
+                    <div class="content" aria-hidden="true">
+                        <div class="inner">
+                            <h3 style="margin:12px 0 6px">The problem</h3>
+                            <p>
+                                Small and medium businesses manage invoices, expenses, clients, and team collaboration using fragmented tools
+                                (Excel, WhatsApp, email, Google Drive). This leads to:
+                            </p>
+                            <ul>
+                                <li>Data loss & errors</li>
+                                <li>No real-time visibility</li>
+                                <li>Weak financial control</li>
+                                <li>No role-based security</li>
+                                <li>No traceability</li>
+                            </ul>
+
+                            <h3 style="margin:14px 0 6px">The solution</h3>
+                            <p>
+                                A multitenant SaaS platform that allows each company to:
+                            </p>
+                            <ul>
+                                <li>Create and send invoices</li>
+                                <li>Track expenses with attachments</li>
+                                <li>Manage clients</li>
+                                <li>Collaborate via roles & permissions</li>
+                                <li>Get real-time financial insights</li>
+                            </ul>
+                            <p class="pillrow">
+                                <span class="pill">Multitenancy</span>
+                                <span class="pill">Data isolation</span>
+                                <span class="pill">RBAC</span>
+                                <span class="pill">Traceability</span>
+                            </p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 2 -->
+                <div class="section" data-acc>
+                    <div class="section-title" role="button" tabindex="0" aria-expanded="false">
+                        <div class="left">
+                            <div class="badge b2">2</div>
+                            <div class="twrap">
+                                <h2>Exploration & Innovation Ideas</h2>
+                                <p>Automation, smart features, transparency</p>
+                            </div>
+                        </div>
+                        <div class="chev" aria-hidden="true">⌄</div>
+                    </div>
+                    <div class="content" aria-hidden="true">
+                        <div class="inner">
+                            <p>
+                                To deliver value beyond basic financial management, we propose innovative features that improve automation,
+                                security, and decision-making:
+                            </p>
+
+                            <h3 style="margin:12px 0 6px">2.1 AI-Assisted Financial Categorization</h3>
+                            <p>
+                                The system suggests categories and tax types for invoices and expenses based on description and amount,
+                                reducing manual input and classification errors.
+                            </p>
+
+                            <h3 style="margin:12px 0 6px">2.2 Smart Alerts and Risk Detection</h3>
+                            <p>
+                                The platform detects unusual behavior (delayed payments, high expenses, budget overruns) and notifies responsible users.
+                            </p>
+
+                            <h3 style="margin:12px 0 6px">2.3 Audit Trail and Activity Tracking</h3>
+                            <p>
+                                Important actions (creating invoices, approving expenses, modifying users) are recorded in an activity log
+                                to ensure transparency, accountability, and compliance.
+                            </p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 3 -->
+                <div class="section" data-acc>
+                    <div class="section-title" role="button" tabindex="0" aria-expanded="false">
+                        <div class="left">
+                            <div class="badge b3">3</div>
+                            <div class="twrap">
+                                <h2>State-of-the-Art Review</h2>
+                                <p>Competitor comparison + differentiation</p>
+                            </div>
+                        </div>
+                        <div class="chev" aria-hidden="true">⌄</div>
+                    </div>
+                    <div class="content" aria-hidden="true">
+                        <div class="inner">
+                            <p>
+                                Several solutions exist for financial and business management. Below is a comparative overview:
+                            </p>
+
+                            <table>
+                                <thead>
+                                <tr>
+                                    <th>Platform</th>
+                                    <th>Invoicing</th>
+                                    <th>Expense Tracking</th>
+                                    <th>Multi-company</th>
+                                    <th>Team Roles</th>
+                                    <th>Reporting</th>
+                                    <th>Limitations</th>
+                                </tr>
+                                </thead>
+                                <tbody>
+                                <tr>
+                                    <td>QuickBooks</td>
+                                    <td class="yes">Yes</td>
+                                    <td class="yes">Yes</td>
+                                    <td>Limited</td>
+                                    <td>Basic</td>
+                                    <td>Good</td>
+                                    <td>Expensive for SMEs</td>
+                                </tr>
+                                <tr>
+                                    <td>Zoho Books</td>
+                                    <td class="yes">Yes</td>
+                                    <td class="yes">Yes</td>
+                                    <td class="yes">Yes</td>
+                                    <td class="yes">Yes</td>
+                                    <td>Good</td>
+                                    <td>Complex interface</td>
+                                </tr>
+                                <tr>
+                                    <td>Odoo</td>
+                                    <td class="yes">Yes</td>
+                                    <td class="yes">Yes</td>
+                                    <td class="yes">Yes</td>
+                                    <td class="yes">Yes</td>
+                                    <td>Very good</td>
+                                    <td>Heavy configuration</td>
+                                </tr>
+                                <tr>
+                                    <td>Wave</td>
+                                    <td class="yes">Yes</td>
+                                    <td class="yes">Yes</td>
+                                    <td>No</td>
+                                    <td>Limited</td>
+                                    <td>Basic</td>
+                                    <td>Not scalable</td>
+                                </tr>
+                                <tr>
+                                    <td><b>Our Platform</b></td>
+                                    <td class="yes">Yes</td>
+                                    <td class="yes">Yes</td>
+                                    <td class="yes">Yes</td>
+                                    <td><b>Advanced</b></td>
+                                    <td><b>Smart + AI</b></td>
+                                    <td>Designed for SMEs</td>
+                                </tr>
+                                </tbody>
+                            </table>
+
+                            <p style="margin-top:12px">
+                                Unlike existing systems, our solution focuses on <b>multitenancy</b>, <b>collaboration</b>,
+                                <b>affordability</b>, and <b>intelligent automation</b>, making it better suited for SMEs.
+                            </p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 4 -->
+                <div class="section" data-acc>
+                    <div class="section-title" role="button" tabindex="0" aria-expanded="false">
+                        <div class="left">
+                            <div class="badge b4">4</div>
+                            <div class="twrap">
+                                <h2>Business Requirements</h2>
+                                <p>Actors, user stories, non-functional requirements</p>
+                            </div>
+                        </div>
+                        <div class="chev" aria-hidden="true">⌄</div>
+                    </div>
+                    <div class="content" aria-hidden="true">
+                        <div class="inner">
+                            <h3 style="margin:12px 0 6px">4.1 Actors</h3>
+                            <ul>
+                                <li><b>Platform Admin</b> – manages the global system</li>
+                                <li><b>Business Owner</b> – owns a company workspace</li>
+                                <li><b>Business Admin</b> – manages users and settings</li>
+                                <li><b>Accountant</b> – manages invoices and expenses</li>
+                                <li><b>Team Member</b> – accesses assigned features</li>
+                                <li><b>Client</b> – views invoices and payment status</li>
+                            </ul>
+
+                            <h3 style="margin:12px 0 6px">4.2 Functional Requirements (User Stories)</h3>
+                            <ul>
+                                <li>A Business Owner can create and manage a company workspace.</li>
+                                <li>An Admin can invite users and assign roles.</li>
+                                <li>An Accountant can create, edit, and send invoices.</li>
+                                <li>Users can upload and categorize expenses.</li>
+                                <li>Managers can view financial reports.</li>
+                                <li>Clients can view invoices online.</li>
+                                <li>The system records all actions in audit logs.</li>
+                                <li>Users receive notifications for important events.</li>
+                            </ul>
+
+                            <h3 style="margin:12px 0 6px">4.3 Non-Functional Requirements</h3>
+                            <div class="pillrow">
+                                <span class="pill">JWT Authentication</span>
+                                <span class="pill">RBAC</span>
+                                <span class="pill">Tenant data isolation</span>
+                                <span class="pill">High availability</span>
+                                <span class="pill">Performance</span>
+                                <span class="pill">Logging & traceability</span>
+                                <span class="pill">Accessible UI</span>
+                            </div>
+
+                            <p style="margin-top:12px">
+                                Example tech note: <code>tenantId</code> must be enforced in every query to ensure isolation in a shared database model.
+                            </p>
+                        </div>
+                    </div>
+                </div>
+
+            </div>
+        </div>
+    </div>
+
+</div>
+
+<script>
+    const sections = [...document.querySelectorAll('[data-acc]')];
+
+    function setOpen(section, open){
+        const title = section.querySelector('.section-title');
+        const content = section.querySelector('.content');
+
+        section.classList.toggle('open', open);
+        title.setAttribute('aria-expanded', String(open));
+        content.setAttribute('aria-hidden', String(!open));
+
+        if(open){
+            content.style.maxHeight = content.scrollHeight + "px";
+        }else{
+            content.style.maxHeight = "0px";
+        }
+    }
+
+    function toggleSection(section){
+        const isOpen = section.classList.contains('open');
+        setOpen(section, !isOpen);
+    }
+
+    sections.forEach(section => {
+        const title = section.querySelector('.section-title');
+
+        title.addEventListener('click', () => toggleSection(section));
+        title.addEventListener('keydown', (e) => {
+            if(e.key === 'Enter' || e.key === ' '){
+                e.preventDefault();
+                toggleSection(section);
+            }
+        });
+
+        // Start collapsed
+        setOpen(section, false);
+    });
+
+    function expandAll(){ sections.forEach(s => setOpen(s, true)); }
+    function collapseAll(){ sections.forEach(s => setOpen(s, false)); }
+
+    // Expose to buttons
+    window.expandAll = expandAll;
+    window.collapseAll = collapseAll;
+
+    // Smoothly recalc height on resize (if a section is open)
+    window.addEventListener('resize', () => {
+        sections.forEach(s => {
+            if(s.classList.contains('open')){
+                const c = s.querySelector('.content');
+                c.style.maxHeight = c.scrollHeight + "px";
+            }
+        });
+    });
+</script>
+</body>
+</html>
