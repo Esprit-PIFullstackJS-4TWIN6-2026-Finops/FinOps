@@ -1,0 +1,745 @@
+/**
+ * Système de traduction multi-langue pour FinOps Platform
+ * Langues supportées : Français (fr), English (en), العربية (ar)
+ */
+
+export type Lang = 'fr' | 'en' | 'ar';
+export type UiLang = Lang | string;
+
+export const LANGUAGES: { code: Lang; label: string; flag: string; dir: 'ltr' | 'rtl' }[] = [
+  { code: 'fr', label: 'Français', flag: '🇫🇷', dir: 'ltr' },
+  { code: 'en', label: 'English', flag: '🇬🇧', dir: 'ltr' },
+  { code: 'ar', label: 'العربية', flag: '🇸🇦', dir: 'rtl' },
+];
+
+const translations: Record<Lang, Record<string, string>> = {
+  fr: {
+    // Landing page
+    'landing.badge': 'Plateforme FinOps Nouvelle Génération',
+    'landing.title1': 'Votre Business,',
+    'landing.title2': 'Parfaitement Automatisé.',
+    'landing.subtitle': 'La plateforme SaaS tout-en-un pour la facturation, le suivi des dépenses et la gestion client avec une sécurité de niveau entreprise.',
+    'landing.join': 'Rejoindre maintenant',
+    'landing.login': 'Se connecter',
+    'landing.features': 'Fonctionnalités',
+    'landing.performance': 'Performance',
+    'landing.platform': 'Plateforme',
+    'landing.connection': 'Connexion',
+    'landing.start': 'Commencer',
+    'landing.feature1.title': 'Facturation Instantanée',
+    'landing.feature1.desc': 'Générez des factures conformes en quelques secondes avec des relances automatisées.',
+    'landing.feature2.title': 'Conformité Globale',
+    'landing.feature2.desc': 'Support multi-devises et calcul fiscal en temps réel pour plus de 40 juridictions.',
+    'landing.feature3.title': 'Analytiques Prédictives',
+    'landing.feature3.desc': 'Prévisions de trésorerie par IA pour planifier les 12 prochains mois avec 98% de précision.',
+    'landing.transactions': 'Transactions',
+    'landing.companies': 'Entreprises',
+    'landing.uptime': 'Disponibilité',
+    'landing.support': 'Support',
+    'landing.footer': '© 2026 FinOps Platform. Tous droits réservés.',
+
+    // Auth
+    'auth.login': 'Connexion',
+    'auth.selectRole': 'Sélectionnez votre type de compte puis connectez-vous.',
+    'auth.yourRole': 'Quel est votre rôle ?',
+    'auth.email': 'Email',
+    'auth.password': 'Mot de passe',
+    'auth.submit': 'Se connecter',
+    'auth.noAccount': "Pas encore de compte ?",
+    'auth.registerBusiness': 'Inscrire votre entreprise',
+    'auth.forgotPassword': 'Mot de passe oublié ?',
+    'auth.fillAll': 'Veuillez remplir tous les champs.',
+    'auth.wrongCredentials': 'Email ou mot de passe incorrect.',
+    'auth.fullName': 'Nom complet',
+    'auth.role': 'Rôle',
+    'auth.noAccountCreate': "Pas de compte ? Créer un",
+    'auth.alreadyMember': 'Déjà membre ? Se connecter',
+    'auth.quickAccess': 'Accès rapide (mode démo) :',
+    'auth.change': 'Changer',
+
+    // Roles
+    'role.admin.label': 'Administrateur Plateforme',
+    'role.admin.desc': 'Gère les inscriptions et supervise la plateforme.',
+    'role.admin.how': 'Compte créé automatiquement au démarrage.',
+    'role.owner.label': "Propriétaire d'Entreprise",
+    'role.owner.desc': 'Gère son entreprise, ses employés et ses finances.',
+    'role.owner.how': "Inscrit via le formulaire → accepté par l'admin → reçoit ses identifiants par email.",
+    'role.employee.label': 'Employé / Manager / Comptable',
+    'role.employee.desc': 'Travaille dans une entreprise avec des droits limités.',
+    'role.employee.how': "Créé par le propriétaire → reçoit un email d'invitation avec ses identifiants.",
+    'role.info.owner': "Entrez l'email et le mot de passe reçus par email après validation de votre inscription par l'administrateur.",
+    'role.info.employee': "Entrez l'email et le mot de passe temporaire reçus dans l'email d'invitation envoyé par votre employeur.",
+
+    // Forgot password
+    'forgot.title': 'Mot de passe oublié',
+    'forgot.desc': 'Entrez votre adresse email. Si un compte existe, un nouveau mot de passe temporaire vous sera envoyé.',
+    'forgot.emailPlaceholder': 'votre-email@entreprise.com',
+    'forgot.send': 'Envoyer le mot de passe',
+    'forgot.back': 'Retour à la connexion',
+    'forgot.success': 'Email envoyé !',
+    'forgot.checkEmail': 'Vérifiez votre boîte email pour le nouveau mot de passe temporaire.',
+    'forgot.goLogin': 'Aller à la connexion',
+
+    // Registration
+    'reg.title': 'Inscription Entreprise',
+    'reg.desc': 'Demande de création de compte',
+    'reg.companyName': "Nom de l'entreprise",
+    'reg.companyPlaceholder': 'Ma Société SAS',
+    'reg.category': 'Catégorie',
+    'reg.email': 'Email professionnel',
+    'reg.emailPlaceholder': 'contact@entreprise.com',
+    'reg.ownerName': 'Nom du propriétaire',
+    'reg.ownerPlaceholder': 'Jean Dupont',
+    'reg.phone': 'Téléphone',
+    'reg.phonePlaceholder': '+216 XX XXX XXX',
+    'reg.submit': 'Envoyer la demande',
+    'reg.success': 'Demande envoyée !',
+    'reg.successDesc': "Votre demande a été transmise à l'administrateur. Vous recevrez un email une fois votre compte validé.",
+    'reg.goLogin': 'Aller à la connexion',
+
+    // Change password
+    'changepwd.title': 'Changement de mot de passe',
+    'changepwd.desc': 'Obligatoire à la première connexion pour sécuriser votre compte.',
+    'changepwd.current': 'Mot de passe temporaire',
+    'changepwd.new': 'Nouveau mot de passe',
+    'changepwd.newPlaceholder': 'Min. 8 caractères',
+    'changepwd.confirm': 'Confirmer',
+    'changepwd.submit': 'Valider le nouveau mot de passe',
+    'changepwd.mismatch': 'Les mots de passe ne correspondent pas.',
+    'changepwd.minLength': 'Minimum 8 caractères requis.',
+    'changepwd.rules': 'Le mot de passe doit contenir 1 majuscule, 1 minuscule et 1 chiffre.',
+    'changepwd.rule1': 'Minimum 8 caractères',
+    'changepwd.rule2': 'Une majuscule',
+    'changepwd.rule3': 'Une minuscule',
+    'changepwd.rule4': 'Un chiffre',
+
+    // Connection error
+    'conn.title': 'Serveur inaccessible',
+    'conn.desc': 'Le backend ne répond pas. Démarrez le serveur pour continuer.',
+    'conn.instructions': 'Instructions',
+    'conn.step1': 'Ouvrez un terminal dans le dossier du projet',
+    'conn.step2': 'Exécutez',
+    'conn.step3': 'Exécutez',
+    'conn.step4': 'Attendez le message',
+    'conn.step5': 'Cliquez sur',
+    'conn.retry': 'Réessayer',
+    'conn.demoMode': 'Mode démo',
+    'conn.demoNote': 'Le mode démo utilise des données fictives uniquement.',
+
+    // Loading
+    'loading.connecting': 'Connexion au serveur...',
+
+    // Sidebar & Nav
+    'nav.dashboard': 'Tableau de bord',
+    'nav.invoices': 'Factures',
+    'nav.expenses': 'Dépenses',
+    'nav.clients': 'Clients',
+    'nav.analytics': 'Analytiques',
+    'nav.audit': "Journal d'audit",
+    'nav.employees': 'Employés',
+    'nav.settings': 'Paramètres',
+    'nav.logout': 'Déconnexion',
+    'nav.requests': "Demandes d'inscription",
+    'nav.myPortal': 'Mon portail',
+    'nav.myInvoices': 'Mes factures',
+    'nav.projects': 'Projets',
+    'nav.support': 'Support',
+
+    // Admin - Registration requests
+    'admin.requests.title': "Demandes d'inscription",
+    'admin.requests.desc': "Gérez les demandes d'inscription des propriétaires d'entreprise.",
+    'admin.requests.refresh': 'Actualiser',
+    'admin.requests.pending': 'En attente',
+    'admin.requests.all': 'Toutes',
+    'admin.requests.accepted': 'Acceptée',
+    'admin.requests.rejected': 'Rejetée',
+    'admin.requests.accept': 'Accepter',
+    'admin.requests.reject': 'Rejeter',
+    'admin.requests.rejectReason': 'Motif du rejet (min. 10 caractères)...',
+    'admin.requests.rejectMinLength': 'Le motif du rejet doit contenir au moins 10 caractères.',
+    'admin.requests.empty': 'Aucune demande',
+    'admin.requests.emptyDesc': "Aucune demande d'inscription pour le moment.",
+    'admin.requests.acceptedTitle': 'Inscription acceptée',
+    'admin.requests.emailSent': 'Un email contenant les identifiants a été envoyé au propriétaire.',
+    'admin.requests.emailNotSent': "⚠ L'email n'a pas pu être envoyé (SMTP non configuré). Communiquez les identifiants manuellement.",
+    'admin.requests.credentials': 'Identifiants générés',
+    'admin.requests.tempPassword': 'Mot de passe temporaire',
+    'admin.requests.assignedRole': 'Rôle attribué',
+    'admin.requests.copy': 'Copier les identifiants',
+    'admin.requests.copied': 'Copié !',
+    'admin.requests.close': 'Fermer',
+    'admin.requests.viewEmail': "Voir l'email envoyé (Ethereal)",
+    'admin.requests.mustChangePwd': "L'utilisateur devra changer son mot de passe lors de sa première connexion.",
+    'admin.requests.rejectedTitle': 'Inscription rejetée',
+    'admin.requests.rejectedEmailSent': 'Un email de rejet a été envoyé à',
+    'admin.requests.rejectedEmailNotSent': "⚠ L'email n'a pas pu être envoyé à",
+    'admin.requests.reason': 'Motif :',
+    'admin.requests.viewRejectEmail': "Voir l'email de rejet (Ethereal)",
+    'admin.requests.company': 'Entreprise',
+    'admin.requests.owner': 'Propriétaire',
+    'admin.requests.date': 'Date',
+
+    // Employees
+    'emp.title': 'Gestion des employés',
+    'emp.desc': 'Créez et gérez les comptes de vos employés.',
+    'emp.add': 'Ajouter un employé',
+    'emp.name': "Nom de l'employé",
+    'emp.email': 'Email',
+    'emp.role': 'Rôle',
+    'emp.create': 'Créer le compte',
+    'emp.cancel': 'Annuler',
+    'emp.empty': 'Aucun employé',
+    'emp.emptyDesc': "Vous n'avez pas encore ajouté d'employés à votre entreprise.",
+    'emp.created': 'Employé créé avec succès',
+    'emp.emailSent': "Un email d'invitation a été envoyé à l'employé.",
+    'emp.emailNotSent': "⚠ L'email n'a pas pu être envoyé. Communiquez les identifiants manuellement.",
+
+    // Settings
+    'settings.title': 'Paramètres',
+    'settings.desc': 'Gérez les informations de votre entreprise.',
+    'settings.companyName': "Nom de l'entreprise",
+    'settings.taxId': 'Matricule fiscale',
+    'settings.taxRate': 'Taux de TVA (%)',
+    'settings.currency': 'Devise',
+    'settings.address': 'Adresse',
+    'settings.phone': 'Téléphone',
+    'settings.save': 'Enregistrer',
+    'settings.saved': 'Paramètres enregistrés avec succès.',
+
+    // Categories
+    'cat.technology': 'Technologie',
+    'cat.retail': 'Commerce',
+    'cat.services': 'Services',
+    'cat.manufacturing': 'Industrie',
+    'cat.construction': 'BTP',
+    'cat.healthcare': 'Santé',
+    'cat.finance': 'Finance',
+    'cat.other': 'Autre',
+
+    // Employee roles
+    'erole.manager': 'Manager',
+    'erole.employee': 'Employé',
+    'erole.accountant': 'Comptable',
+
+    // Dashboard
+    'dash.totalRevenue': 'Revenu Total',
+    'dash.pendingInvoices': 'Factures en attente',
+    'dash.totalExpenses': 'Total Dépenses',
+    'dash.activeClients': 'Clients actifs',
+    'dash.revenueOverview': 'Aperçu des Revenus',
+    'dash.recentInvoices': 'Factures Récentes',
+
+    // Common
+    'common.save': 'Enregistrer',
+    'common.cancel': 'Annuler',
+    'common.close': 'Fermer',
+    'common.loading': 'Chargement...',
+    'common.error': 'Erreur',
+    'common.success': 'Succès',
+    'common.email': 'Email',
+    'common.password': 'Mot de passe',
+    'common.name': 'Nom',
+    'common.search': 'Rechercher...',
+    'common.noData': 'Aucune donnée',
+  },
+
+  en: {
+    // Landing page
+    'landing.badge': 'Next-Gen FinOps Platform',
+    'landing.title1': 'Your Business,',
+    'landing.title2': 'Perfectly Automated.',
+    'landing.subtitle': 'The all-in-one SaaS platform for invoicing, expense tracking, and client management with enterprise-grade security.',
+    'landing.join': 'Join Now',
+    'landing.login': 'Sign In',
+    'landing.features': 'Features',
+    'landing.performance': 'Performance',
+    'landing.platform': 'Platform',
+    'landing.connection': 'Sign In',
+    'landing.start': 'Get Started',
+    'landing.feature1.title': 'Instant Invoicing',
+    'landing.feature1.desc': 'Generate compliant invoices in seconds with automated reminders.',
+    'landing.feature2.title': 'Global Compliance',
+    'landing.feature2.desc': 'Multi-currency support and real-time tax calculation for 40+ jurisdictions.',
+    'landing.feature3.title': 'Predictive Analytics',
+    'landing.feature3.desc': 'AI-powered cash flow forecasting to plan the next 12 months with 98% accuracy.',
+    'landing.transactions': 'Transactions',
+    'landing.companies': 'Companies',
+    'landing.uptime': 'Uptime',
+    'landing.support': 'Support',
+    'landing.footer': '© 2026 FinOps Platform. All rights reserved.',
+
+    // Auth
+    'auth.login': 'Sign In',
+    'auth.selectRole': 'Select your account type and sign in.',
+    'auth.yourRole': 'What is your role?',
+    'auth.email': 'Email',
+    'auth.password': 'Password',
+    'auth.submit': 'Sign In',
+    'auth.noAccount': "Don't have an account?",
+    'auth.registerBusiness': 'Register your business',
+    'auth.forgotPassword': 'Forgot password?',
+    'auth.fillAll': 'Please fill in all fields.',
+    'auth.wrongCredentials': 'Incorrect email or password.',
+    'auth.fullName': 'Full Name',
+    'auth.role': 'Role',
+    'auth.noAccountCreate': "No account? Create one",
+    'auth.alreadyMember': 'Already a member? Sign in',
+    'auth.quickAccess': 'Quick access (demo mode):',
+    'auth.change': 'Change',
+
+    // Roles
+    'role.admin.label': 'Platform Administrator',
+    'role.admin.desc': 'Manages registrations and oversees the platform.',
+    'role.admin.how': 'Account created automatically at startup.',
+    'role.owner.label': 'Business Owner',
+    'role.owner.desc': 'Manages their company, employees, and finances.',
+    'role.owner.how': 'Registered via form → accepted by admin → receives credentials by email.',
+    'role.employee.label': 'Employee / Manager / Accountant',
+    'role.employee.desc': 'Works within a company with limited permissions.',
+    'role.employee.how': 'Created by owner → receives an invitation email with credentials.',
+    'role.info.owner': 'Enter the email and password received after your registration was validated by the administrator.',
+    'role.info.employee': 'Enter the email and temporary password received in the invitation email sent by your employer.',
+
+    // Forgot password
+    'forgot.title': 'Forgot Password',
+    'forgot.desc': 'Enter your email address. If an account exists, a new temporary password will be sent.',
+    'forgot.emailPlaceholder': 'your-email@company.com',
+    'forgot.send': 'Send Password',
+    'forgot.back': 'Back to Sign In',
+    'forgot.success': 'Email Sent!',
+    'forgot.checkEmail': 'Check your email for the new temporary password.',
+    'forgot.goLogin': 'Go to Sign In',
+
+    // Registration
+    'reg.title': 'Business Registration',
+    'reg.desc': 'Account creation request',
+    'reg.companyName': 'Company Name',
+    'reg.companyPlaceholder': 'My Company LLC',
+    'reg.category': 'Category',
+    'reg.email': 'Professional Email',
+    'reg.emailPlaceholder': 'contact@company.com',
+    'reg.ownerName': 'Owner Name',
+    'reg.ownerPlaceholder': 'John Doe',
+    'reg.phone': 'Phone',
+    'reg.phonePlaceholder': '+1 555 123 4567',
+    'reg.submit': 'Submit Request',
+    'reg.success': 'Request Sent!',
+    'reg.successDesc': 'Your request has been submitted to the administrator. You will receive an email once your account is validated.',
+    'reg.goLogin': 'Go to Sign In',
+
+    // Change password
+    'changepwd.title': 'Change Password',
+    'changepwd.desc': 'Required on first login to secure your account.',
+    'changepwd.current': 'Temporary Password',
+    'changepwd.new': 'New Password',
+    'changepwd.newPlaceholder': 'Min. 8 characters',
+    'changepwd.confirm': 'Confirm',
+    'changepwd.submit': 'Set New Password',
+    'changepwd.mismatch': 'Passwords do not match.',
+    'changepwd.minLength': 'Minimum 8 characters required.',
+    'changepwd.rules': 'Password must contain 1 uppercase, 1 lowercase, and 1 digit.',
+    'changepwd.rule1': 'Minimum 8 characters',
+    'changepwd.rule2': 'One uppercase letter',
+    'changepwd.rule3': 'One lowercase letter',
+    'changepwd.rule4': 'One digit',
+
+    // Connection error
+    'conn.title': 'Server Unreachable',
+    'conn.desc': 'The backend is not responding. Start the server to continue.',
+    'conn.instructions': 'Instructions',
+    'conn.step1': 'Open a terminal in the project folder',
+    'conn.step2': 'Run',
+    'conn.step3': 'Run',
+    'conn.step4': 'Wait for the message',
+    'conn.step5': 'Click',
+    'conn.retry': 'Retry',
+    'conn.demoMode': 'Demo Mode',
+    'conn.demoNote': 'Demo mode uses fictitious data only.',
+
+    // Loading
+    'loading.connecting': 'Connecting to server...',
+
+    // Sidebar & Nav
+    'nav.dashboard': 'Dashboard',
+    'nav.invoices': 'Invoices',
+    'nav.expenses': 'Expenses',
+    'nav.clients': 'Clients',
+    'nav.analytics': 'Analytics',
+    'nav.audit': 'Audit Log',
+    'nav.employees': 'Employees',
+    'nav.settings': 'Settings',
+    'nav.logout': 'Sign Out',
+    'nav.requests': 'Registration Requests',
+    'nav.myPortal': 'My Portal',
+    'nav.myInvoices': 'My Invoices',
+    'nav.projects': 'Projects',
+    'nav.support': 'Support',
+
+    // Admin - Registration requests
+    'admin.requests.title': 'Registration Requests',
+    'admin.requests.desc': 'Manage business owner registration requests.',
+    'admin.requests.refresh': 'Refresh',
+    'admin.requests.pending': 'Pending',
+    'admin.requests.all': 'All',
+    'admin.requests.accepted': 'Accepted',
+    'admin.requests.rejected': 'Rejected',
+    'admin.requests.accept': 'Accept',
+    'admin.requests.reject': 'Reject',
+    'admin.requests.rejectReason': 'Rejection reason (min. 10 characters)...',
+    'admin.requests.rejectMinLength': 'The rejection reason must contain at least 10 characters.',
+    'admin.requests.empty': 'No Requests',
+    'admin.requests.emptyDesc': 'No registration requests at the moment.',
+    'admin.requests.acceptedTitle': 'Registration Accepted',
+    'admin.requests.emailSent': 'An email with credentials has been sent to the owner.',
+    'admin.requests.emailNotSent': '⚠ Email could not be sent (SMTP not configured). Share credentials manually.',
+    'admin.requests.credentials': 'Generated Credentials',
+    'admin.requests.tempPassword': 'Temporary Password',
+    'admin.requests.assignedRole': 'Assigned Role',
+    'admin.requests.copy': 'Copy Credentials',
+    'admin.requests.copied': 'Copied!',
+    'admin.requests.close': 'Close',
+    'admin.requests.viewEmail': 'View sent email (Ethereal)',
+    'admin.requests.mustChangePwd': 'The user will need to change their password on first login.',
+    'admin.requests.rejectedTitle': 'Registration Rejected',
+    'admin.requests.rejectedEmailSent': 'A rejection email has been sent to',
+    'admin.requests.rejectedEmailNotSent': '⚠ Email could not be sent to',
+    'admin.requests.reason': 'Reason:',
+    'admin.requests.viewRejectEmail': 'View rejection email (Ethereal)',
+    'admin.requests.company': 'Company',
+    'admin.requests.owner': 'Owner',
+    'admin.requests.date': 'Date',
+
+    // Employees
+    'emp.title': 'Employee Management',
+    'emp.desc': 'Create and manage your employee accounts.',
+    'emp.add': 'Add Employee',
+    'emp.name': 'Employee Name',
+    'emp.email': 'Email',
+    'emp.role': 'Role',
+    'emp.create': 'Create Account',
+    'emp.cancel': 'Cancel',
+    'emp.empty': 'No Employees',
+    'emp.emptyDesc': "You haven't added any employees to your company yet.",
+    'emp.created': 'Employee created successfully',
+    'emp.emailSent': 'An invitation email has been sent to the employee.',
+    'emp.emailNotSent': '⚠ Email could not be sent. Share credentials manually.',
+
+    // Settings
+    'settings.title': 'Settings',
+    'settings.desc': 'Manage your company information.',
+    'settings.companyName': 'Company Name',
+    'settings.taxId': 'Tax ID',
+    'settings.taxRate': 'Tax Rate (%)',
+    'settings.currency': 'Currency',
+    'settings.address': 'Address',
+    'settings.phone': 'Phone',
+    'settings.save': 'Save',
+    'settings.saved': 'Settings saved successfully.',
+
+    // Categories
+    'cat.technology': 'Technology',
+    'cat.retail': 'Retail',
+    'cat.services': 'Services',
+    'cat.manufacturing': 'Manufacturing',
+    'cat.construction': 'Construction',
+    'cat.healthcare': 'Healthcare',
+    'cat.finance': 'Finance',
+    'cat.other': 'Other',
+
+    // Employee roles
+    'erole.manager': 'Manager',
+    'erole.employee': 'Employee',
+    'erole.accountant': 'Accountant',
+
+    // Dashboard
+    'dash.totalRevenue': 'Total Revenue',
+    'dash.pendingInvoices': 'Pending Invoices',
+    'dash.totalExpenses': 'Total Expenses',
+    'dash.activeClients': 'Active Clients',
+    'dash.revenueOverview': 'Revenue Overview',
+    'dash.recentInvoices': 'Recent Invoices',
+
+    // Common
+    'common.save': 'Save',
+    'common.cancel': 'Cancel',
+    'common.close': 'Close',
+    'common.loading': 'Loading...',
+    'common.error': 'Error',
+    'common.success': 'Success',
+    'common.email': 'Email',
+    'common.password': 'Password',
+    'common.name': 'Name',
+    'common.search': 'Search...',
+    'common.noData': 'No data',
+  },
+
+  ar: {
+    // Landing page
+    'landing.badge': 'منصة FinOps من الجيل الجديد',
+    'landing.title1': 'أعمالك،',
+    'landing.title2': 'مؤتمتة بالكامل.',
+    'landing.subtitle': 'المنصة السحابية المتكاملة للفواتير وتتبع النفقات وإدارة العملاء بأمان على مستوى المؤسسات.',
+    'landing.join': 'انضم الآن',
+    'landing.login': 'تسجيل الدخول',
+    'landing.features': 'الميزات',
+    'landing.performance': 'الأداء',
+    'landing.platform': 'المنصة',
+    'landing.connection': 'تسجيل الدخول',
+    'landing.start': 'ابدأ الآن',
+    'landing.feature1.title': 'فوترة فورية',
+    'landing.feature1.desc': 'أنشئ فواتير متوافقة في ثوانٍ مع تذكيرات تلقائية.',
+    'landing.feature2.title': 'امتثال عالمي',
+    'landing.feature2.desc': 'دعم العملات المتعددة وحساب الضرائب في الوقت الفعلي لأكثر من 40 سلطة قضائية.',
+    'landing.feature3.title': 'تحليلات تنبؤية',
+    'landing.feature3.desc': 'توقعات التدفق النقدي بالذكاء الاصطناعي للتخطيط لـ 12 شهرًا القادمة بدقة 98٪.',
+    'landing.transactions': 'المعاملات',
+    'landing.companies': 'الشركات',
+    'landing.uptime': 'وقت التشغيل',
+    'landing.support': 'الدعم',
+    'landing.footer': '© 2026 منصة FinOps. جميع الحقوق محفوظة.',
+
+    // Auth
+    'auth.login': 'تسجيل الدخول',
+    'auth.selectRole': 'اختر نوع حسابك ثم سجّل الدخول.',
+    'auth.yourRole': 'ما هو دورك؟',
+    'auth.email': 'البريد الإلكتروني',
+    'auth.password': 'كلمة المرور',
+    'auth.submit': 'تسجيل الدخول',
+    'auth.noAccount': 'ليس لديك حساب؟',
+    'auth.registerBusiness': 'سجّل شركتك',
+    'auth.forgotPassword': 'نسيت كلمة المرور؟',
+    'auth.fillAll': 'يرجى ملء جميع الحقول.',
+    'auth.wrongCredentials': 'بريد إلكتروني أو كلمة مرور غير صحيحة.',
+    'auth.fullName': 'الاسم الكامل',
+    'auth.role': 'الدور',
+    'auth.noAccountCreate': 'ليس لديك حساب؟ أنشئ حسابًا',
+    'auth.alreadyMember': 'عضو بالفعل؟ سجّل الدخول',
+    'auth.quickAccess': 'وصول سريع (وضع تجريبي):',
+    'auth.change': 'تغيير',
+
+    // Roles
+    'role.admin.label': 'مدير المنصة',
+    'role.admin.desc': 'يدير التسجيلات ويشرف على المنصة.',
+    'role.admin.how': 'يُنشأ الحساب تلقائياً عند بدء التشغيل.',
+    'role.owner.label': 'صاحب الشركة',
+    'role.owner.desc': 'يدير شركته وموظفيه وماليّاته.',
+    'role.owner.how': 'يُسجّل عبر النموذج ← يوافق عليه المدير ← يتلقى بياناته عبر البريد.',
+    'role.employee.label': 'موظف / مدير / محاسب',
+    'role.employee.desc': 'يعمل في شركة بصلاحيات محدودة.',
+    'role.employee.how': 'يُنشئه صاحب الشركة ← يتلقى بريد دعوة مع بياناته.',
+    'role.info.owner': 'أدخل البريد الإلكتروني وكلمة المرور المستلمة بعد التحقق من تسجيلك من قبل المدير.',
+    'role.info.employee': 'أدخل البريد الإلكتروني وكلمة المرور المؤقتة المستلمة في بريد الدعوة المرسل من صاحب العمل.',
+
+    // Forgot password
+    'forgot.title': 'نسيت كلمة المرور',
+    'forgot.desc': 'أدخل بريدك الإلكتروني. إذا كان الحساب موجوداً، سيتم إرسال كلمة مرور مؤقتة جديدة.',
+    'forgot.emailPlaceholder': 'بريدك@الشركة.com',
+    'forgot.send': 'إرسال كلمة المرور',
+    'forgot.back': 'العودة لتسجيل الدخول',
+    'forgot.success': 'تم إرسال البريد!',
+    'forgot.checkEmail': 'تحقق من بريدك الإلكتروني للحصول على كلمة المرور المؤقتة الجديدة.',
+    'forgot.goLogin': 'الذهاب لتسجيل الدخول',
+
+    // Registration
+    'reg.title': 'تسجيل الشركة',
+    'reg.desc': 'طلب إنشاء حساب',
+    'reg.companyName': 'اسم الشركة',
+    'reg.companyPlaceholder': 'شركتي ش.ذ.م.م',
+    'reg.category': 'الفئة',
+    'reg.email': 'البريد المهني',
+    'reg.emailPlaceholder': 'contact@company.com',
+    'reg.ownerName': 'اسم المالك',
+    'reg.ownerPlaceholder': 'أحمد محمد',
+    'reg.phone': 'الهاتف',
+    'reg.phonePlaceholder': '+216 XX XXX XXX',
+    'reg.submit': 'إرسال الطلب',
+    'reg.success': 'تم إرسال الطلب!',
+    'reg.successDesc': 'تم إرسال طلبك إلى المدير. ستتلقى بريداً إلكترونياً بمجرد التحقق من حسابك.',
+    'reg.goLogin': 'الذهاب لتسجيل الدخول',
+
+    // Change password
+    'changepwd.title': 'تغيير كلمة المرور',
+    'changepwd.desc': 'مطلوب عند أول تسجيل دخول لتأمين حسابك.',
+    'changepwd.current': 'كلمة المرور المؤقتة',
+    'changepwd.new': 'كلمة المرور الجديدة',
+    'changepwd.newPlaceholder': '8 أحرف على الأقل',
+    'changepwd.confirm': 'تأكيد',
+    'changepwd.submit': 'تأكيد كلمة المرور الجديدة',
+    'changepwd.mismatch': 'كلمتا المرور غير متطابقتين.',
+    'changepwd.minLength': 'مطلوب 8 أحرف على الأقل.',
+    'changepwd.rules': 'يجب أن تحتوي كلمة المرور على حرف كبير وحرف صغير ورقم.',
+    'changepwd.rule1': '8 أحرف على الأقل',
+    'changepwd.rule2': 'حرف كبير واحد',
+    'changepwd.rule3': 'حرف صغير واحد',
+    'changepwd.rule4': 'رقم واحد',
+
+    // Connection error
+    'conn.title': 'الخادم غير متاح',
+    'conn.desc': 'الخادم لا يستجيب. قم بتشغيل الخادم للمتابعة.',
+    'conn.instructions': 'التعليمات',
+    'conn.step1': 'افتح طرفية في مجلد المشروع',
+    'conn.step2': 'نفّذ',
+    'conn.step3': 'نفّذ',
+    'conn.step4': 'انتظر الرسالة',
+    'conn.step5': 'انقر على',
+    'conn.retry': 'إعادة المحاولة',
+    'conn.demoMode': 'الوضع التجريبي',
+    'conn.demoNote': 'الوضع التجريبي يستخدم بيانات وهمية فقط.',
+
+    // Loading
+    'loading.connecting': 'جاري الاتصال بالخادم...',
+
+    // Sidebar & Nav
+    'nav.dashboard': 'لوحة التحكم',
+    'nav.invoices': 'الفواتير',
+    'nav.expenses': 'المصروفات',
+    'nav.clients': 'العملاء',
+    'nav.analytics': 'التحليلات',
+    'nav.audit': 'سجل التدقيق',
+    'nav.employees': 'الموظفين',
+    'nav.settings': 'الإعدادات',
+    'nav.logout': 'تسجيل الخروج',
+    'nav.requests': 'طلبات التسجيل',
+    'nav.myPortal': 'بوابتي',
+    'nav.myInvoices': 'فواتيري',
+    'nav.projects': 'المشاريع',
+    'nav.support': 'الدعم',
+
+    // Admin - Registration requests
+    'admin.requests.title': 'طلبات التسجيل',
+    'admin.requests.desc': 'إدارة طلبات تسجيل أصحاب الشركات.',
+    'admin.requests.refresh': 'تحديث',
+    'admin.requests.pending': 'قيد الانتظار',
+    'admin.requests.all': 'الكل',
+    'admin.requests.accepted': 'مقبولة',
+    'admin.requests.rejected': 'مرفوضة',
+    'admin.requests.accept': 'قبول',
+    'admin.requests.reject': 'رفض',
+    'admin.requests.rejectReason': 'سبب الرفض (10 أحرف على الأقل)...',
+    'admin.requests.rejectMinLength': 'يجب أن يحتوي سبب الرفض على 10 أحرف على الأقل.',
+    'admin.requests.empty': 'لا توجد طلبات',
+    'admin.requests.emptyDesc': 'لا توجد طلبات تسجيل حالياً.',
+    'admin.requests.acceptedTitle': 'تم قبول التسجيل',
+    'admin.requests.emailSent': 'تم إرسال بريد إلكتروني يحتوي على بيانات الاعتماد إلى المالك.',
+    'admin.requests.emailNotSent': '⚠ لم يتم إرسال البريد (SMTP غير مُعدّ). شارك بيانات الاعتماد يدوياً.',
+    'admin.requests.credentials': 'بيانات الاعتماد المولّدة',
+    'admin.requests.tempPassword': 'كلمة المرور المؤقتة',
+    'admin.requests.assignedRole': 'الدور المعيّن',
+    'admin.requests.copy': 'نسخ بيانات الاعتماد',
+    'admin.requests.copied': 'تم النسخ!',
+    'admin.requests.close': 'إغلاق',
+    'admin.requests.viewEmail': 'عرض البريد المرسل (Ethereal)',
+    'admin.requests.mustChangePwd': 'سيحتاج المستخدم لتغيير كلمة المرور عند أول تسجيل دخول.',
+    'admin.requests.rejectedTitle': 'تم رفض التسجيل',
+    'admin.requests.rejectedEmailSent': 'تم إرسال بريد الرفض إلى',
+    'admin.requests.rejectedEmailNotSent': '⚠ لم يتم إرسال البريد إلى',
+    'admin.requests.reason': 'السبب:',
+    'admin.requests.viewRejectEmail': 'عرض بريد الرفض (Ethereal)',
+    'admin.requests.company': 'الشركة',
+    'admin.requests.owner': 'المالك',
+    'admin.requests.date': 'التاريخ',
+
+    // Employees
+    'emp.title': 'إدارة الموظفين',
+    'emp.desc': 'أنشئ وأدر حسابات موظفيك.',
+    'emp.add': 'إضافة موظف',
+    'emp.name': 'اسم الموظف',
+    'emp.email': 'البريد الإلكتروني',
+    'emp.role': 'الدور',
+    'emp.create': 'إنشاء الحساب',
+    'emp.cancel': 'إلغاء',
+    'emp.empty': 'لا يوجد موظفين',
+    'emp.emptyDesc': 'لم تقم بإضافة موظفين إلى شركتك بعد.',
+    'emp.created': 'تم إنشاء الموظف بنجاح',
+    'emp.emailSent': 'تم إرسال بريد الدعوة إلى الموظف.',
+    'emp.emailNotSent': '⚠ لم يتم إرسال البريد. شارك بيانات الاعتماد يدوياً.',
+
+    // Settings
+    'settings.title': 'الإعدادات',
+    'settings.desc': 'إدارة معلومات شركتك.',
+    'settings.companyName': 'اسم الشركة',
+    'settings.taxId': 'المعرف الضريبي',
+    'settings.taxRate': 'نسبة الضريبة (%)',
+    'settings.currency': 'العملة',
+    'settings.address': 'العنوان',
+    'settings.phone': 'الهاتف',
+    'settings.save': 'حفظ',
+    'settings.saved': 'تم حفظ الإعدادات بنجاح.',
+
+    // Categories
+    'cat.technology': 'تكنولوجيا',
+    'cat.retail': 'تجارة',
+    'cat.services': 'خدمات',
+    'cat.manufacturing': 'صناعة',
+    'cat.construction': 'بناء',
+    'cat.healthcare': 'صحة',
+    'cat.finance': 'مالية',
+    'cat.other': 'أخرى',
+
+    // Employee roles
+    'erole.manager': 'مدير',
+    'erole.employee': 'موظف',
+    'erole.accountant': 'محاسب',
+
+    // Dashboard
+    'dash.totalRevenue': 'إجمالي الإيرادات',
+    'dash.pendingInvoices': 'الفواتير المعلقة',
+    'dash.totalExpenses': 'إجمالي المصروفات',
+    'dash.activeClients': 'العملاء النشطين',
+    'dash.revenueOverview': 'نظرة عامة على الإيرادات',
+    'dash.recentInvoices': 'الفواتير الأخيرة',
+
+    // Common
+    'common.save': 'حفظ',
+    'common.cancel': 'إلغاء',
+    'common.close': 'إغلاق',
+    'common.loading': 'جاري التحميل...',
+    'common.error': 'خطأ',
+    'common.success': 'نجاح',
+    'common.email': 'البريد الإلكتروني',
+    'common.password': 'كلمة المرور',
+    'common.name': 'الاسم',
+    'common.search': 'بحث...',
+    'common.noData': 'لا توجد بيانات',
+  },
+};
+
+const runtimeTranslations: Record<string, Record<string, string>> = {};
+
+export function isStaticLang(lang: string): lang is Lang {
+  return lang === 'fr' || lang === 'en' || lang === 'ar';
+}
+
+export function getBaseTranslations(lang: Lang = 'en'): Record<string, string> {
+  return translations[lang];
+}
+
+export function setRuntimeTranslations(lang: string, values: Record<string, string>): void {
+  runtimeTranslations[lang] = values;
+}
+
+export function getRuntimeTranslations(lang: string): Record<string, string> | undefined {
+  return runtimeTranslations[lang];
+}
+
+export function t(key: string, lang: UiLang): string {
+  if (isStaticLang(lang)) {
+    return translations[lang]?.[key] ?? translations.fr?.[key] ?? key;
+  }
+  return runtimeTranslations[lang]?.[key] ?? translations.en?.[key] ?? translations.fr?.[key] ?? key;
+}
+
+export function getLangDir(lang: UiLang): 'ltr' | 'rtl' {
+  if (
+    lang === 'ar' ||
+    lang.endsWith('_Arab') ||
+    lang.endsWith('_Hebr') ||
+    lang.endsWith('_Thaa') ||
+    lang.endsWith('_Nkoo') ||
+    lang.endsWith('_Adlm') ||
+    lang.endsWith('_Rohg')
+  ) {
+    return 'rtl';
+  }
+  return isStaticLang(lang) ? (LANGUAGES.find(l => l.code === lang)?.dir ?? 'ltr') : 'ltr';
+}

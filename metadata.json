@@ -1,0 +1,7 @@
+{
+  "name": "FinOps SaaS Platform",
+  "description": "A comprehensive multitenant SaaS platform for financial operations, featuring invoicing, expense management, client relations, and advanced reporting.",
+  "requestFramePermissions": [
+    "camera"
+  ]
+}
