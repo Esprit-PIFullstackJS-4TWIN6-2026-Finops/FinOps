@@ -660,8 +660,14 @@ Expense: ${JSON.stringify(input)}`,
   ): Promise<string> {
     if (sourceLang === targetLang) return text;
 
-    const sl = this.toGoogleLangCode(sourceLang);
-    const tl = this.toGoogleLangCode(targetLang);
+    let sl: string;
+    let tl: string;
+    try {
+      sl = this.toGoogleLangCode(sourceLang);
+      tl = this.toGoogleLangCode(targetLang);
+    } catch {
+      return text;
+    }
     const params = new URLSearchParams({
       client: 'gtx',
       sl,

@@ -15,10 +15,12 @@ import {
   AreaChart, Area, BarChart, Bar, LineChart, Line
 } from 'recharts';
 import { UserRole, User, Tenant, Invoice, Expense, Client, AuditLog, mapBackendRoleToFrontend } from './types';
-import { BackendAPI } from './api';
 import {
   BackendAPI as RealAPI,
+  auditFromBackend,
   checkBackendHealth,
+  clientFromBackend,
+  invoiceFromBackend,
   type AiAnalyzeExpensesResponse,
   type AiForecastResponse,
   type AiMonthlyReportResponse,
@@ -30,15 +32,30 @@ import {
 } from './api-backend';
 import { getErrorMessage } from './utils/api-errors';
 import {
+  DYNAMIC_TO_STATIC_UI_LANG,
   LANGUAGES,
+  Lang,
   UiLang,
   getBaseTranslations,
   getLangDir,
   getRuntimeTranslations,
   isStaticLang,
+  resolveStaticUiLang,
   setRuntimeTranslations,
   t,
 } from './i18n';
+
+function localeForLang(lang: UiLang): string {
+  if (isStaticLang(lang)) {
+    if (lang === 'ar') return 'ar';
+    if (lang === 'fr') return 'fr-FR';
+    return 'en-US';
+  }
+  const s = String(lang);
+  if (s.startsWith('arb') || s.includes('Arab')) return 'ar';
+  if (s.startsWith('fra')) return 'fr-FR';
+  return 'en-US';
+}
 
 /* ================================================================
    DESIGN SYSTEM – shared atoms
@@ -197,11 +214,36 @@ const COMPANY_CATEGORIES = [
   { value: 'other', label: 'Autre' },
 ];
 
-const ROLE_OPTIONS = [
-  { value: 'manager', label: 'Manager' },
-  { value: 'employee', label: 'Employé' },
-  { value: 'accountant', label: 'Comptable' },
-];
+function roleJobSelectOptions(lang: UiLang) {
+  return [
+    { value: 'manager', label: t('erole.manager', lang) },
+    { value: 'employee', label: t('erole.employee', lang) },
+    { value: 'accountant', label: t('erole.accountant', lang) },
+  ];
+}
+
+function roleJobLabel(role: string, lang: UiLang): string {
+  if (role === 'manager') return t('erole.manager', lang);
+  if (role === 'accountant') return t('erole.accountant', lang);
+  if (role === 'owner') return t('erole.owner', lang);
+  return t('erole.employee', lang);
+}
+
+function companyCategoryOptions(lang: UiLang) {
+  return COMPANY_CATEGORIES.map((c) => ({ value: c.value, label: t(`cat.${c.value}`, lang) }));
+}
+
+function invoiceStatusLabel(status: string, lang: UiLang): string {
+  const k = `inv.status.${status}`;
+  const v = t(k, lang);
+  return v !== k ? v : status;
+}
+
+function forecastTrendLabel(trend: string, lang: UiLang): string {
+  const k = `ai.forecast.trend.${trend}`;
+  const v = t(k, lang);
+  return v !== k ? v : trend;
+}
 
 function downloadCsv(filename: string, rows: Array<Record<string, string | number>>) {
   if (!rows.length) return;
@@ -286,11 +328,13 @@ const NLLB_ROOT_TO_FLAG: Record<string, string> = {
   vie: '🇻🇳',
 };
 
-const DYNAMIC_TO_STATIC_LANG: Record<string, UiLang> = {
-  eng_Latn: 'en',
-  fra_Latn: 'fr',
-  arb_Arab: 'ar',
-};
+/** Aligned with backend AiService.fallbackNllbLanguages — avoids resetting saved lang before /ai/languages responds. */
+const FALLBACK_NLLB_LANGUAGE_CODES: string[] = [
+  'eng_Latn', 'fra_Latn', 'arb_Arab', 'spa_Latn', 'deu_Latn', 'ita_Latn', 'por_Latn', 'tur_Latn',
+  'rus_Cyrl', 'zho_Hans', 'hin_Deva', 'jpn_Jpan', 'kor_Hang', 'nld_Latn', 'pol_Latn', 'ukr_Cyrl',
+  'ron_Latn', 'ces_Latn', 'swe_Latn', 'dan_Latn', 'fin_Latn', 'ell_Grek', 'heb_Hebr', 'tha_Thai',
+  'ind_Latn', 'msa_Latn', 'vie_Latn',
+];
 
 function buildDynamicLanguageOption(code: string): LanguageOption {
   const known = NLLB_LANGUAGE_META[code];
@@ -350,9 +394,10 @@ const LanguageSwitcher: React.FC<{
   return (
     <div className="relative">
       <button
+        type="button"
         onClick={() => setOpen(!open)}
         className={`flex items-center gap-2 ${compact ? 'p-2' : 'px-3 py-2'} hover:bg-gray-100 dark:hover:bg-gray-800 rounded-xl text-gray-500 dark:text-gray-400 transition-colors text-sm font-medium`}
-        title="Changer de langue / Change language"
+        title={t('lang.switcher.title', lang)}
       >
         {isLoading ? <Loader2 size={18} className="animate-spin" /> : <Globe size={18} />}
         {!compact && <span>{current.flag} {current.label}</span>}
@@ -362,15 +407,18 @@ const LanguageSwitcher: React.FC<{
       {open && (
         <>
           <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
-          <div className="absolute right-0 top-full mt-1 z-50 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-xl shadow-xl overflow-auto max-h-80 min-w-[230px]">
+          <div
+            dir={getLangDir(lang)}
+            className="absolute end-0 top-full mt-1 z-50 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-xl shadow-xl overflow-auto max-h-80 min-w-[230px]"
+          >
             <div className="p-2 border-b border-gray-100 dark:border-gray-800">
               <div className="relative">
-                <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+                <Search size={14} className="absolute start-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
                 <input
                   value={query}
                   onChange={(e) => setQuery(e.target.value)}
-                  placeholder="Rechercher une langue..."
-                  className="w-full pl-8 pr-3 py-2 text-xs rounded-lg bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 text-gray-700 dark:text-gray-200 outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500"
+                  placeholder={t('lang.switcher.search', lang)}
+                  className="w-full ps-8 pe-3 py-2 text-xs rounded-lg bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 text-gray-700 dark:text-gray-200 outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500"
                 />
               </div>
             </div>
@@ -390,7 +438,7 @@ const LanguageSwitcher: React.FC<{
               </button>
             ))}
             {!filteredOptions.length && (
-              <p className="px-4 py-3 text-xs text-gray-500 dark:text-gray-400">Aucune langue trouvée.</p>
+              <p className="px-4 py-3 text-xs text-gray-500 dark:text-gray-400">{t('lang.switcher.empty', lang)}</p>
             )}
             {unavailableMessage && (
               <p className="px-4 py-2.5 text-[11px] border-t border-amber-200 dark:border-amber-900/50 bg-amber-50 dark:bg-amber-900/20 text-amber-700 dark:text-amber-300">
@@ -407,9 +455,7 @@ const LanguageSwitcher: React.FC<{
 const App: React.FC = () => {
   const [isDarkMode, setIsDarkMode] = useState(() => localStorage.getItem('theme') === 'dark');
   const [lang, setLang] = useState<UiLang>(() => localStorage.getItem('finops_lang') || 'fr');
-  const [availableDynamicLangs, setAvailableDynamicLangs] = useState<string[]>(() =>
-    ADVANCED_NLLB_LANGUAGES.map((l) => l.code),
-  );
+  const [availableDynamicLangs, setAvailableDynamicLangs] = useState<string[]>(() => [...FALLBACK_NLLB_LANGUAGE_CODES]);
   const [isTranslatingUi, setIsTranslatingUi] = useState(false);
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
   const [activeTab, setActiveTab] = useState('dashboard');
@@ -419,7 +465,7 @@ const App: React.FC = () => {
   const [showAuth, setShowAuth] = useState(false);
   const [authMode, setAuthMode] = useState<'login' | 'register' | 'register-business'>('login');
   const [showRegisterBusiness, setShowRegisterBusiness] = useState(false);
-  const [useRealBackend, setUseRealBackend] = useState(true);
+  const useRealBackend = true;
   const [connectionError, setConnectionError] = useState<string | null>(null);
   const [translationServiceAvailable, setTranslationServiceAvailable] = useState(true);
   const [userCompanies, setUserCompanies] = useState<CompanyBackend[]>([]);
@@ -432,7 +478,7 @@ const App: React.FC = () => {
     const staticOptions: LanguageOption[] = LANGUAGES.map((l) => ({ ...l, code: l.code as UiLang }));
     const staticCodes = new Set(staticOptions.map((l) => String(l.code)));
     const dynamicOptions = availableDynamicLangs
-      .filter((code) => !staticCodes.has(code) && !DYNAMIC_TO_STATIC_LANG[code])
+      .filter((code) => !staticCodes.has(code) && !DYNAMIC_TO_STATIC_UI_LANG[code])
       .map((code) => buildDynamicLanguageOption(code));
     return [...staticOptions, ...dynamicOptions];
   }, [availableDynamicLangs]);
@@ -473,7 +519,7 @@ const App: React.FC = () => {
       try {
         const result = await RealAPI.getTranslationLanguages();
         if (Array.isArray(result.languages) && result.languages.length) {
-          setAvailableDynamicLangs(result.languages);
+          setAvailableDynamicLangs((prev) => Array.from(new Set([...prev, ...result.languages])));
         }
         setTranslationServiceAvailable(true);
       } catch {
@@ -490,8 +536,8 @@ const App: React.FC = () => {
   }, [isDarkMode]);
 
   useEffect(() => {
-    if (DYNAMIC_TO_STATIC_LANG[lang]) {
-      setLang(DYNAMIC_TO_STATIC_LANG[lang]);
+    if (DYNAMIC_TO_STATIC_UI_LANG[lang]) {
+      setLang(DYNAMIC_TO_STATIC_UI_LANG[lang]);
       return;
     }
     localStorage.setItem('finops_lang', lang);
@@ -569,52 +615,56 @@ const App: React.FC = () => {
   }, [lang, languageOptions]);
 
   useEffect(() => {
+    let cancelled = false;
     const loadRuntimeTranslations = async () => {
       if (isStaticLang(lang) || getRuntimeTranslations(lang)) return;
       setIsTranslatingUi(true);
+      const english = getBaseTranslations('en');
+      const keys = Object.keys(english);
       try {
-        const english = getBaseTranslations('en');
-        const keys = Object.keys(english);
-        const texts = keys.map(k => english[k]);
+        const texts = keys.map((k) => english[k]);
         const result = await RealAPI.translateBatch({
           texts,
           source_lang: 'eng_Latn',
           target_lang: lang,
         });
-        if (result.translations.length === keys.length) {
-          const dynamicValues = keys.reduce<Record<string, string>>((acc, key, idx) => {
-            acc[key] = result.translations[idx];
-            return acc;
-          }, {});
-          setRuntimeTranslations(lang, dynamicValues);
-          setTranslationServiceAvailable(true);
-        }
+        if (cancelled) return;
+        const tr = Array.isArray(result.translations) ? result.translations : [];
+        const dynamicValues = keys.reduce<Record<string, string>>((acc, key, idx) => {
+          const piece = tr[idx];
+          const use =
+            piece != null && String(piece).trim() !== '' ? String(piece) : english[key] ?? key;
+          acc[key] = use;
+          return acc;
+        }, {});
+        setRuntimeTranslations(lang, dynamicValues);
+        setTranslationServiceAvailable(true);
       } catch {
+        if (cancelled) return;
+        setRuntimeTranslations(lang, { ...english });
         setTranslationServiceAvailable(false);
-        // Keep English fallback if runtime translation service is unavailable.
       } finally {
-        setIsTranslatingUi(false);
+        if (!cancelled) setIsTranslatingUi(false);
       }
     };
     void loadRuntimeTranslations();
+    return () => {
+      cancelled = true;
+    };
   }, [lang]);
 
   const handleLogin = async (u: User, mustChangePassword?: boolean) => {
     setUser({ ...u, mustChangePassword });
-    if (u.companyId && useRealBackend) {
+    if (u.companyId) {
       try {
         const company = await RealAPI.getCompany(u.companyId);
         if (company) setTenant({ id: company.id, name: company.name, logo: company.logo, currency: company.currency, taxRate: company.taxRate });
       } catch {}
-    } else {
-      const t = await BackendAPI.getTenant();
-      setTenant(t);
     }
   };
 
   const handleLogout = async () => {
-    if (useRealBackend) RealAPI.logout();
-    else await BackendAPI.logout();
+    RealAPI.logout();
     setUser(null); setTenant(null); setShowAuth(false); setActiveTab('dashboard');
   };
 
@@ -640,9 +690,9 @@ const App: React.FC = () => {
 
   const handleCreateCompany = async () => {
     if (!user || user.role !== UserRole.BUSINESS_OWNER) return;
-    const name = window.prompt('Nom de la nouvelle entreprise:');
+    const name = window.prompt(t('company.promptNewName', lang));
     if (!name || !name.trim()) return;
-    const categoryInput = window.prompt('Catégorie (technology, retail, services, manufacturing, construction, healthcare, finance, other):', 'other');
+    const categoryInput = window.prompt(t('company.promptCategory', lang), 'other');
     const category = (categoryInput || 'other').trim() as CompanyBackend['category'];
     setCompanySwitching(true);
     setCompanyActionError(null);
@@ -693,7 +743,7 @@ const App: React.FC = () => {
           <Loader2 size={20} className="absolute -bottom-1 -right-1 text-primary-600 animate-spin" />
         </div>
         <div className="text-center space-y-1">
-          <p className="text-lg font-bold text-gray-900 dark:text-white">FinOps Platform</p>
+          <p className="text-lg font-bold text-gray-900 dark:text-white">{t('loading.brand', lang)}</p>
           <p className="text-sm text-gray-400 animate-pulse">{t('loading.connecting', lang)}</p>
         </div>
       </div>
@@ -715,10 +765,8 @@ const App: React.FC = () => {
       } else { setConnectionError('BACKEND_DOWN'); }
       setIsAppLoading(false);
     };
-    const handleDemoMode = async () => {
-      setUseRealBackend(false); setConnectionError(null);
-      const u = await BackendAPI.getSession();
-      if (u) { setUser(u); const t = await BackendAPI.getTenant(); setTenant(t); }
+    const handleDemoMode = () => {
+      window.alert(t('conn.backendAlert', lang));
     };
     return (
       <div className="min-h-screen bg-gray-50 dark:bg-gray-950 flex items-center justify-center p-6">
@@ -739,7 +787,7 @@ const App: React.FC = () => {
               <li>{t('conn.step1', lang)}</li>
               <li>{t('conn.step2', lang)} <code className="bg-gray-200 dark:bg-gray-700 px-1.5 py-0.5 rounded text-primary-600 dark:text-primary-400 font-mono">cd backend</code></li>
               <li>{t('conn.step3', lang)} <code className="bg-gray-200 dark:bg-gray-700 px-1.5 py-0.5 rounded text-primary-600 dark:text-primary-400 font-mono">npm run start:dev</code></li>
-              <li>{t('conn.step4', lang)} <code className="bg-gray-200 dark:bg-gray-700 px-1.5 py-0.5 rounded font-mono">"FinOps API running"</code></li>
+              <li>{t('conn.step4', lang)} <code className="bg-gray-200 dark:bg-gray-700 px-1.5 py-0.5 rounded font-mono">{t('conn.apiRunningMsg', lang)}</code></li>
               <li>{t('conn.step5', lang)} <strong>{t('conn.retry', lang)}</strong></li>
             </ol>
           </div>
@@ -748,6 +796,7 @@ const App: React.FC = () => {
             <PrimaryButton onClick={handleDemoMode} variant="outline" className="flex-1 py-3.5 text-sm">{t('conn.demoMode', lang)}</PrimaryButton>
           </div>
           <p className="text-[11px] text-gray-400 text-center mt-4">{t('conn.demoNote', lang)}</p>
+          <p className="text-[11px] text-amber-700/90 dark:text-amber-300/90 text-center mt-3 max-w-md mx-auto leading-relaxed">{t('conn.dbHint', lang)}</p>
         </Card>
       </div>
     );
@@ -777,7 +826,7 @@ const App: React.FC = () => {
     { id: 'clients', icon: <Users size={20} />, label: t('nav.clients', lang) },
     { id: 'analytics', icon: <BarChart3 size={20} />, label: t('nav.analytics', lang) },
     { id: 'audit', icon: <History size={20} />, label: t('nav.audit', lang) },
-    ...((user.role === UserRole.TEAM_MEMBER || user.role === UserRole.ACCOUNTANT || user.role === UserRole.BUSINESS_ADMIN) ? [{ id: 'join-company', icon: <Building2 size={20} />, label: 'Rejoindre entreprise' }] : []),
+    ...((user.role === UserRole.TEAM_MEMBER || user.role === UserRole.ACCOUNTANT || user.role === UserRole.BUSINESS_ADMIN) ? [{ id: 'join-company', icon: <Building2 size={20} />, label: t('nav.joinCompany', lang) }] : []),
     ...((user.role === UserRole.BUSINESS_OWNER || user.role === UserRole.BUSINESS_ADMIN) && user.companyId ? [{ id: 'employees', icon: <UserPlus size={20} />, label: t('nav.employees', lang) }] : []),
   ];
 
@@ -791,9 +840,9 @@ const App: React.FC = () => {
   const navItems = isClient ? clientNavItems : adminNavItems;
 
   return (
-    <div className="min-h-screen flex bg-gray-50 dark:bg-gray-950 text-gray-900 dark:text-gray-100 transition-colors">
+    <div className="min-h-screen flex bg-gray-50 dark:bg-gray-950 text-gray-900 dark:text-gray-100 transition-colors" dir={getLangDir(lang)}>
       {/* Sidebar */}
-      <aside className={`${isSidebarOpen ? 'w-64' : 'w-[72px]'} bg-white dark:bg-gray-900 border-r border-gray-200 dark:border-gray-800 transition-all duration-300 flex flex-col fixed h-full z-50`}>
+      <aside className={`${isSidebarOpen ? 'w-64' : 'w-[72px]'} bg-white dark:bg-gray-900 border-e border-gray-200 dark:border-gray-800 transition-all duration-300 flex flex-col fixed h-full z-50`}>
         <div className={`h-16 flex items-center ${isSidebarOpen ? 'px-5' : 'px-0 justify-center'} border-b border-gray-100 dark:border-gray-800`}>
           <div className="flex items-center gap-3">
             <div className="w-9 h-9 bg-primary-600 rounded-xl flex items-center justify-center text-white shrink-0 shadow-md shadow-primary-600/25">
@@ -819,7 +868,7 @@ const App: React.FC = () => {
       </aside>
 
       {/* Main content */}
-      <main className={`relative flex-1 transition-all duration-300 ${isSidebarOpen ? 'ml-64' : 'ml-[72px]'}`}>
+      <main className={`relative flex-1 transition-all duration-300 ${isSidebarOpen ? 'ms-64' : 'ms-[72px]'}`}>
         <header className="sticky top-0 z-40 bg-white/80 dark:bg-gray-950/80 backdrop-blur-xl border-b border-gray-200 dark:border-gray-800 h-16 flex items-center justify-between px-6">
           <div className="flex items-center gap-3">
             <button onClick={() => setIsSidebarOpen(!isSidebarOpen)} className="p-2 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-xl text-gray-500 dark:text-gray-400 transition-colors">
@@ -843,7 +892,7 @@ const App: React.FC = () => {
                     disabled={companySwitching}
                     className="px-2.5 py-1.5 rounded-lg bg-primary-600 text-white text-xs font-semibold hover:bg-primary-700 transition-colors disabled:opacity-60"
                   >
-                    + Société
+                    {t('nav.newCompany', lang)}
                   </button>
                 )}
               </div>
@@ -861,9 +910,10 @@ const App: React.FC = () => {
           <div className="flex items-center gap-3">
             <LanguageSwitcher lang={lang} setLang={setLang} options={languageOptions} compact isLoading={isTranslatingUi} unavailableMessage={translationUnavailableMessage} />
             <button
+              type="button"
               onClick={() => setIsNotificationPanelOpen((v) => !v)}
               className="relative p-2 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-xl transition-colors text-gray-500 dark:text-gray-400"
-              title="Notifications"
+              title={t('notif.title', lang)}
             >
               <Bell size={18} />
               {unreadNotificationsCount > 0 && (
@@ -892,16 +942,17 @@ const App: React.FC = () => {
           <div className="absolute right-6 top-20 z-40 w-full max-w-md">
             <Card className="p-4 shadow-2xl">
               <div className="flex items-center justify-between mb-3">
-                <h3 className="font-bold text-sm text-gray-900 dark:text-white">Notifications</h3>
+                <h3 className="font-bold text-sm text-gray-900 dark:text-white">{t('notif.title', lang)}</h3>
                 <button
+                  type="button"
                   onClick={handleMarkAllNotificationsAsRead}
                   className="text-xs text-primary-600 hover:text-primary-700 font-semibold"
                 >
-                  Tout marquer lu
+                  {t('notif.markAllRead', lang)}
                 </button>
               </div>
               {notifications.length === 0 ? (
-                <p className="text-xs text-gray-500 py-6 text-center">Aucune notification.</p>
+                <p className="text-xs text-gray-500 py-6 text-center">{t('notif.empty', lang)}</p>
               ) : (
                 <div className="space-y-2 max-h-[420px] overflow-auto pr-1">
                   {notifications.map((n) => (
@@ -919,7 +970,7 @@ const App: React.FC = () => {
                         {!n.readAt && <span className="w-2 h-2 rounded-full bg-rose-500 mt-1 shrink-0" />}
                       </div>
                       <p className="text-xs text-gray-500 mt-1 leading-relaxed">{n.message}</p>
-                      <p className="text-[10px] text-gray-400 mt-2">{new Date(n.createdAt).toLocaleString('fr-FR')}</p>
+                      <p className="text-[10px] text-gray-400 mt-2">{new Date(n.createdAt).toLocaleString(localeForLang(lang))}</p>
                     </button>
                   ))}
                 </div>
@@ -931,29 +982,29 @@ const App: React.FC = () => {
         <div className="p-6 lg:p-8 max-w-7xl mx-auto space-y-6">
           {!isClient ? (
             <>
-              {activeTab === 'admin-requests' && <AdminRegistrationRequestsView />}
-              {activeTab === 'dashboard' && <AdminDashboardView tenant={tenant} />}
-              {activeTab === 'invoices' && <AdminInvoicesView user={user} />}
-              {activeTab === 'expenses' && <AdminExpensesView useRealBackend={useRealBackend} />}
-              {activeTab === 'clients' && <AdminClientsView />}
-              {activeTab === 'analytics' && <AdminAnalyticsView />}
-              {activeTab === 'audit' && <AdminAuditLogView />}
-              {activeTab === 'join-company' && <EmployeeCompanyJoinView />}
-              {activeTab === 'employees' && user.companyId && <AdminEmployeesView companyId={user.companyId} />}
-              {activeTab === 'settings' && <AdminSettingsView tenant={tenant} onUpdate={setTenant} companyId={user.companyId} />}
+              {activeTab === 'admin-requests' && <AdminRegistrationRequestsView lang={lang} />}
+              {activeTab === 'dashboard' && <AdminDashboardView tenant={tenant} lang={lang} />}
+              {activeTab === 'invoices' && <AdminInvoicesView lang={lang} />}
+              {activeTab === 'expenses' && <AdminExpensesView lang={lang} />}
+              {activeTab === 'clients' && <AdminClientsView lang={lang} />}
+              {activeTab === 'analytics' && <AdminAnalyticsView lang={lang} />}
+              {activeTab === 'audit' && <AdminAuditLogView lang={lang} />}
+              {activeTab === 'join-company' && <EmployeeCompanyJoinView lang={lang} />}
+              {activeTab === 'employees' && user.companyId && <AdminEmployeesView companyId={user.companyId} lang={lang} />}
+              {activeTab === 'settings' && <AdminSettingsView tenant={tenant} onUpdate={setTenant} companyId={user.companyId} lang={lang} setLang={setLang} />}
             </>
           ) : (
             <>
-              {activeTab === 'dashboard' && <ClientDashboardView user={user} />}
-              {activeTab === 'invoices' && <ClientInvoicesView user={user} />}
-              {activeTab === 'projects' && <ClientProjectsView />}
-              {activeTab === 'support' && <ClientSupportView />}
-              {activeTab === 'settings' && <AdminSettingsView tenant={null} onUpdate={() => {}} />}
+              {activeTab === 'dashboard' && <ClientDashboardView user={user} lang={lang} />}
+              {activeTab === 'invoices' && <ClientInvoicesView user={user} lang={lang} />}
+              {activeTab === 'projects' && <ClientProjectsView lang={lang} />}
+              {activeTab === 'support' && <ClientSupportView lang={lang} />}
+              {activeTab === 'settings' && <AdminSettingsView tenant={null} onUpdate={() => {}} lang={lang} setLang={setLang} />}
             </>
           )}
         </div>
       </main>
-      <AIAssistantWidget />
+      <AIAssistantWidget lang={lang} />
     </div>
   );
 };
@@ -962,7 +1013,7 @@ const App: React.FC = () => {
    GEMINI AI INSIGHT
    ================================================================ */
 
-const SmartInsightCard: React.FC = () => {
+const SmartInsightCard: React.FC<{ lang: UiLang }> = ({ lang }) => {
   const [analysis, setAnalysis] = useState<AiAnalyzeExpensesResponse | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -973,7 +1024,7 @@ const SmartInsightCard: React.FC = () => {
         setAnalysis(result);
       } catch {
         setAnalysis({
-          summary: 'AI insight currently unavailable. Please retry in a few moments.',
+          summary: t('ai.insight.unavailable', lang),
           anomalies: [],
           alerts: [],
           recommendations: [],
@@ -983,21 +1034,21 @@ const SmartInsightCard: React.FC = () => {
       finally { setLoading(false); }
     };
     void fetchInsight();
-  }, []);
+  }, [lang]);
 
   return (
     <div className="bg-gradient-to-br from-primary-600 to-indigo-700 p-6 rounded-2xl text-white shadow-xl shadow-primary-600/15 relative overflow-hidden group">
-      <div className="absolute -right-8 -bottom-8 opacity-[0.08]"><BrainCircuit size={160} /></div>
+      <div className="absolute -end-8 -bottom-8 opacity-[0.08]"><BrainCircuit size={160} /></div>
       <div className="relative z-10">
         <div className="flex items-center gap-2.5 mb-3">
           <div className="p-1.5 bg-white/20 rounded-lg"><Sparkles size={16} /></div>
-          <span className="text-[11px] font-bold uppercase tracking-wider text-primary-200">Intelligence IA</span>
+          <span className="text-[11px] font-bold uppercase tracking-wider text-primary-200">{t('ai.insight.badge', lang)}</span>
         </div>
-        <h3 className="text-base font-bold mb-2">Briefing Exécutif</h3>
+        <h3 className="text-base font-bold mb-2">{t('ai.insight.title', lang)}</h3>
         {loading ? (
           <div className="flex items-center gap-2 text-primary-200 animate-pulse">
             <Loader2 size={14} className="animate-spin" />
-            <span className="text-xs font-medium">Analyse en cours...</span>
+            <span className="text-xs font-medium">{t('ai.insight.loading', lang)}</span>
           </div>
         ) : (
           <div className="space-y-2">
@@ -1012,7 +1063,7 @@ const SmartInsightCard: React.FC = () => {
   );
 };
 
-const AIForecastPanel: React.FC = () => {
+const AIForecastPanel: React.FC<{ lang: UiLang }> = ({ lang }) => {
   const [forecast, setForecast] = useState<AiForecastResponse | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -1032,23 +1083,23 @@ const AIForecastPanel: React.FC = () => {
   return (
     <Card className="p-6">
       <div className="flex items-center justify-between mb-4">
-        <h3 className="font-bold text-gray-900 dark:text-white">AI Financial Forecast</h3>
+        <h3 className="font-bold text-gray-900 dark:text-white">{t('ai.forecast.title', lang)}</h3>
         {loading && <Loader2 size={16} className="animate-spin text-primary-600" />}
       </div>
       {forecast ? (
         <>
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-4">
             <div className="rounded-xl bg-gray-50 dark:bg-gray-800/60 p-3">
-              <p className="text-[11px] text-gray-500 uppercase tracking-wider">Next month</p>
+              <p className="text-[11px] text-gray-500 uppercase tracking-wider">{t('ai.forecast.nextMonth', lang)}</p>
               <p className="text-lg font-bold text-gray-900 dark:text-white">{forecast.nextMonthExpense.toFixed(2)}</p>
             </div>
             <div className="rounded-xl bg-gray-50 dark:bg-gray-800/60 p-3">
-              <p className="text-[11px] text-gray-500 uppercase tracking-wider">Next 3 months</p>
+              <p className="text-[11px] text-gray-500 uppercase tracking-wider">{t('ai.forecast.next3m', lang)}</p>
               <p className="text-lg font-bold text-gray-900 dark:text-white">{forecast.next3MonthsTotal.toFixed(2)}</p>
             </div>
             <div className="rounded-xl bg-gray-50 dark:bg-gray-800/60 p-3">
-              <p className="text-[11px] text-gray-500 uppercase tracking-wider">Trend</p>
-              <p className="text-lg font-bold text-gray-900 dark:text-white">{forecast.growthTrend}</p>
+              <p className="text-[11px] text-gray-500 uppercase tracking-wider">{t('ai.forecast.trend', lang)}</p>
+              <p className="text-lg font-bold text-gray-900 dark:text-white">{forecastTrendLabel(forecast.growthTrend, lang)}</p>
             </div>
           </div>
           <div className="h-[180px]">
@@ -1064,13 +1115,13 @@ const AIForecastPanel: React.FC = () => {
           </div>
         </>
       ) : (
-        <p className="text-sm text-gray-500">Forecast unavailable right now.</p>
+        <p className="text-sm text-gray-500">{t('ai.forecast.unavailable', lang)}</p>
       )}
     </Card>
   );
 };
 
-const AICostOptimizationPanel: React.FC = () => {
+const AICostOptimizationPanel: React.FC<{ lang: UiLang }> = ({ lang }) => {
   const [data, setData] = useState<AiOptimizeCostsResponse | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -1090,13 +1141,13 @@ const AICostOptimizationPanel: React.FC = () => {
   return (
     <Card className="p-6">
       <div className="flex items-center justify-between mb-4">
-        <h3 className="font-bold text-gray-900 dark:text-white">AI Cost Optimization</h3>
+        <h3 className="font-bold text-gray-900 dark:text-white">{t('ai.cost.title', lang)}</h3>
         {loading && <Loader2 size={16} className="animate-spin text-primary-600" />}
       </div>
       {data ? (
         <div className="space-y-3">
           <p className="text-sm text-gray-600 dark:text-gray-300">{data.summary}</p>
-          <p className="text-sm font-semibold text-emerald-600">Estimated monthly savings: {data.estimatedMonthlySavings.toFixed(2)}</p>
+          <p className="text-sm font-semibold text-emerald-600">{t('ai.cost.savingsPrefix', lang)} {data.estimatedMonthlySavings.toFixed(2)}</p>
           {data.recommendations.slice(0, 3).map((item, idx) => (
             <div key={idx} className="rounded-xl border border-gray-100 dark:border-gray-800 p-3">
               <p className="text-sm font-semibold text-gray-900 dark:text-white">{item.title}</p>
@@ -1105,13 +1156,13 @@ const AICostOptimizationPanel: React.FC = () => {
           ))}
         </div>
       ) : (
-        <p className="text-sm text-gray-500">Optimization data unavailable.</p>
+        <p className="text-sm text-gray-500">{t('ai.cost.unavailable', lang)}</p>
       )}
     </Card>
   );
 };
 
-const AIAssistantWidget: React.FC = () => {
+const AIAssistantWidget: React.FC<{ lang: UiLang }> = ({ lang }) => {
   const [open, setOpen] = useState(false);
   const [message, setMessage] = useState('');
   const [reply, setReply] = useState('');
@@ -1124,19 +1175,20 @@ const AIAssistantWidget: React.FC = () => {
       const data = await RealAPI.chat({ message: message.trim() });
       setReply(data.answer);
     } catch {
-      setReply('Assistant unavailable right now. Please retry.');
+      setReply(t('ai.chat.unavailable', lang));
     } finally {
       setLoading(false);
     }
   };
 
   return (
-    <div className="fixed bottom-5 right-5 z-[70]">
+    <div className="fixed bottom-5 end-5 z-[70]">
       {open && (
         <Card className="w-[360px] max-w-[calc(100vw-2rem)] p-4 mb-3 shadow-2xl">
           <div className="flex items-center justify-between mb-3">
-            <h3 className="font-bold text-gray-900 dark:text-white text-sm">AI FinOps Assistant</h3>
+            <h3 className="font-bold text-gray-900 dark:text-white text-sm">{t('ai.chat.title', lang)}</h3>
             <button
+              type="button"
               onClick={() => setOpen(false)}
               className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200"
             >
@@ -1148,18 +1200,19 @@ const AIAssistantWidget: React.FC = () => {
               value={message}
               onChange={(e) => setMessage(e.target.value)}
               onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); void ask(); } }}
-              placeholder="Ask anything..."
+              placeholder={t('ai.chat.placeholder', lang)}
               className="flex-1 px-3 py-2 rounded-lg border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 text-sm"
             />
-            <PrimaryButton onClick={ask} loading={loading} className="px-3 py-2 text-sm">Ask</PrimaryButton>
+            <PrimaryButton onClick={ask} loading={loading} className="px-3 py-2 text-sm">{t('ai.chat.ask', lang)}</PrimaryButton>
           </div>
-          <p className="text-sm text-gray-600 dark:text-gray-300 min-h-[48px]">{reply || 'Assistant ready.'}</p>
+          <p className="text-sm text-gray-600 dark:text-gray-300 min-h-[48px]">{reply || t('ai.chat.ready', lang)}</p>
         </Card>
       )}
       <button
+        type="button"
         onClick={() => setOpen((v) => !v)}
         className="w-12 h-12 rounded-full bg-primary-600 text-white shadow-lg hover:bg-primary-700 transition-colors flex items-center justify-center"
-        title="Open AI Assistant"
+        title={t('ai.chat.openTitle', lang)}
       >
         <MessageSquare size={20} />
       </button>
@@ -1167,7 +1220,7 @@ const AIAssistantWidget: React.FC = () => {
   );
 };
 
-const AIMonthlyReportCard: React.FC = () => {
+const AIMonthlyReportCard: React.FC<{ lang: UiLang }> = ({ lang }) => {
   const [report, setReport] = useState<AiMonthlyReportResponse | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -1187,17 +1240,17 @@ const AIMonthlyReportCard: React.FC = () => {
   return (
     <Card className="p-6">
       <div className="flex items-center justify-between mb-3">
-        <h3 className="font-bold text-gray-900 dark:text-white">AI Monthly Report</h3>
+        <h3 className="font-bold text-gray-900 dark:text-white">{t('ai.report.title', lang)}</h3>
         {loading && <Loader2 size={16} className="animate-spin text-primary-600" />}
       </div>
       {report ? (
         <div className="space-y-2">
           <p className="text-sm text-gray-600 dark:text-gray-300">{report.executiveSummary}</p>
-          <p className="text-sm font-semibold text-gray-900 dark:text-white">Total expenses: {report.totalExpenses.toFixed(2)}</p>
+          <p className="text-sm font-semibold text-gray-900 dark:text-white">{t('ai.report.totalExpenses', lang)} {report.totalExpenses.toFixed(2)}</p>
           <p className="text-xs text-gray-500">{report.costIncreaseAnalysis}</p>
         </div>
       ) : (
-        <p className="text-sm text-gray-500">Monthly report unavailable.</p>
+        <p className="text-sm text-gray-500">{t('ai.report.unavailable', lang)}</p>
       )}
     </Card>
   );
@@ -1218,14 +1271,14 @@ const BusinessRegistrationView: React.FC<{ lang: UiLang; setLang: (l: UiLang) =>
     const name = form.companyName.trim();
     const ownerName = form.ownerName.trim();
     const email = form.email.trim();
-    if (!name || name.length < 2) return 'Le nom de l\'entreprise doit contenir au moins 2 caractères.';
-    if (name.length > 100) return 'Le nom de l\'entreprise ne doit pas dépasser 100 caractères.';
-    if (!form.companyCategory) return 'Veuillez sélectionner une catégorie.';
-    if (!email) return 'L\'email est obligatoire.';
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return 'Veuillez fournir un email valide (ex: nom@entreprise.com).';
-    if (!ownerName || ownerName.length < 2) return 'Le nom du propriétaire doit contenir au moins 2 caractères.';
-    if (!/^[a-zA-ZÀ-ÿ\s\-']+$/.test(ownerName)) return 'Le nom ne doit contenir que des lettres, espaces, tirets ou apostrophes.';
-    if (form.phone && !/^[\+]?[0-9\s\-\(\)]{6,20}$/.test(form.phone.trim())) return 'Numéro de téléphone invalide (ex: +216 XX XXX XXX).';
+    if (!name || name.length < 2) return t('reg.val.companyMin', lang);
+    if (name.length > 100) return t('reg.val.companyMax', lang);
+    if (!form.companyCategory) return t('reg.val.category', lang);
+    if (!email) return t('reg.val.emailRequired', lang);
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return t('reg.val.emailInvalid', lang);
+    if (!ownerName || ownerName.length < 2) return t('reg.val.ownerMin', lang);
+    if (!/^[a-zA-ZÀ-ÿ\s\-']+$/.test(ownerName)) return t('reg.val.ownerChars', lang);
+    if (form.phone && !/^[\+]?[0-9\s\-\(\)]{6,20}$/.test(form.phone.trim())) return t('reg.val.phoneInvalid', lang);
     return null;
   };
 
@@ -1277,7 +1330,7 @@ const BusinessRegistrationView: React.FC<{ lang: UiLang; setLang: (l: UiLang) =>
 
         <form onSubmit={handleSubmit} className="space-y-4">
           <InputField label={t('reg.companyName', lang)} value={form.companyName} onChange={v => setForm({ ...form, companyName: v })} placeholder={t('reg.companyPlaceholder', lang)} required icon={<Building2 size={16} />} />
-          <SelectField label={t('reg.category', lang)} value={form.companyCategory} onChange={v => setForm({ ...form, companyCategory: v })} options={COMPANY_CATEGORIES} required />
+          <SelectField label={t('reg.category', lang)} value={form.companyCategory} onChange={v => setForm({ ...form, companyCategory: v })} options={companyCategoryOptions(lang)} required />
           <InputField label={t('reg.email', lang)} type="email" value={form.email} onChange={v => setForm({ ...form, email: v })} placeholder={t('reg.emailPlaceholder', lang)} required icon={<Mail size={16} />} />
           <InputField label={t('reg.ownerName', lang)} value={form.ownerName} onChange={v => setForm({ ...form, ownerName: v })} placeholder={t('reg.ownerPlaceholder', lang)} required />
           <InputField label={t('reg.phone', lang)} type="tel" value={form.phone} onChange={v => setForm({ ...form, phone: v })} placeholder={t('reg.phonePlaceholder', lang)} />
@@ -1577,24 +1630,17 @@ const AuthView: React.FC<{ lang: UiLang; setLang: (l: UiLang) => void; languageO
     if (!email || !password) { setError(t('auth.fillAll', lang)); return; }
     setIsProcessing(true); setError(''); setErrorSolution(undefined);
     if (mode === 'login') {
-      if (useRealBackend) {
-        try {
-          const data = await RealAPI.login(email, password);
-          onLogin({
-            id: data.user.id, email: data.user.email, name: data.user.name,
-            role: mapBackendRoleToFrontend(data.user.role),
-            avatarUrl: data.user.avatarUrl || `https://ui-avatars.com/api/?name=${encodeURIComponent(data.user.name)}&background=2563eb&color=fff&bold=true`,
-            companyId: data.user.companyId, mustChangePassword: data.mustChangePassword,
-          }, data.mustChangePassword);
-        } catch (err) { const { message, solution } = getErrorMessage(err); setError(message); setErrorSolution(solution); }
-      } else {
-        const user = await BackendAPI.login(email, password);
-        if (user) onLogin(user);
-        else setError(t('auth.wrongCredentials', lang));
-      }
+      try {
+        const data = await RealAPI.login(email, password);
+        onLogin({
+          id: data.user.id, email: data.user.email, name: data.user.name,
+          role: mapBackendRoleToFrontend(data.user.role),
+          avatarUrl: data.user.avatarUrl || `https://ui-avatars.com/api/?name=${encodeURIComponent(data.user.name)}&background=2563eb&color=fff&bold=true`,
+          companyId: data.user.companyId, mustChangePassword: data.mustChangePassword,
+        }, data.mustChangePassword);
+      } catch (err) { const { message, solution } = getErrorMessage(err); setError(message); setErrorSolution(solution); }
     } else {
-      if (!name || !email) { setError('Veuillez remplir tous les champs.'); }
-      else { const user = await BackendAPI.register(name, email, role); onLogin(user); }
+      setError(t('auth.registerViaBusiness', lang));
     }
     setIsProcessing(false);
   };
@@ -1752,7 +1798,7 @@ const AuthView: React.FC<{ lang: UiLang; setLang: (l: UiLang) => void; languageO
                     onClick={() => setRoleAction('create')}
                     className={`flex-1 px-3 py-2 rounded-lg text-xs font-semibold transition-colors ${roleAction === 'create' ? 'bg-white dark:bg-gray-700 text-gray-900 dark:text-white shadow-sm' : 'text-gray-500'}`}
                   >
-                    Créer un compte
+                    {t('auth.tabCreate', lang)}
                   </button>
                 </div>
               )}
@@ -1760,29 +1806,29 @@ const AuthView: React.FC<{ lang: UiLang; setLang: (l: UiLang) => void; languageO
               {useRealBackend && selectedRole === 'owner' && roleAction === 'create' && (
                 <Card className="p-4 bg-amber-50/70 dark:bg-amber-950/20 border-amber-200 dark:border-amber-900/50">
                   <p className="text-sm text-amber-800 dark:text-amber-300 mb-3">
-                    Pour un compte propriétaire, utilisez le formulaire d'inscription entreprise.
+                    {t('auth.ownerHint', lang)}
                   </p>
                   <PrimaryButton
                     onClick={onShowRegisterBusiness}
                     className="w-full py-2.5 text-sm"
                   >
-                    Ouvrir le formulaire propriétaire
+                    {t('auth.openOwnerForm', lang)}
                   </PrimaryButton>
                 </Card>
               )}
 
               {useRealBackend && selectedRole === 'employee' && roleAction === 'create' && (
                 <Card className="p-4 border-blue-200 dark:border-blue-900/50 bg-blue-50/50 dark:bg-blue-950/20">
-                  <h3 className="font-semibold text-sm text-blue-800 dark:text-blue-300 mb-3">Formulaire de demande de compte employé</h3>
+                  <h3 className="font-semibold text-sm text-blue-800 dark:text-blue-300 mb-3">{t('auth.employeeRequestTitle', lang)}</h3>
                   <form onSubmit={handleEmployeeRequestSubmit} className="space-y-3">
-                    <InputField label="Nom complet" value={employeeRequestForm.fullName} onChange={(v) => setEmployeeRequestForm({ ...employeeRequestForm, fullName: v })} placeholder="Ex: Ali Ben Salah" required />
-                    <InputField label="Email professionnel" type="email" value={employeeRequestForm.email} onChange={(v) => setEmployeeRequestForm({ ...employeeRequestForm, email: v })} placeholder="nom@entreprise.com" required />
-                    <InputField label="Entreprise" value={employeeRequestForm.companyName} onChange={(v) => setEmployeeRequestForm({ ...employeeRequestForm, companyName: v })} placeholder="Nom de votre entreprise" required />
-                    <SelectField label="Rôle demandé" value={employeeRequestForm.desiredRole} onChange={(v) => setEmployeeRequestForm({ ...employeeRequestForm, desiredRole: v })} options={ROLE_OPTIONS} required />
-                    <PrimaryButton type="submit" loading={employeeRequestLoading} className="w-full py-2.5 text-sm">Envoyer la demande</PrimaryButton>
+                    <InputField label={t('auth.employeeFullName', lang)} value={employeeRequestForm.fullName} onChange={(v) => setEmployeeRequestForm({ ...employeeRequestForm, fullName: v })} placeholder="Ex: Ali Ben Salah" required />
+                    <InputField label={t('auth.proEmail', lang)} type="email" value={employeeRequestForm.email} onChange={(v) => setEmployeeRequestForm({ ...employeeRequestForm, email: v })} placeholder="nom@entreprise.com" required />
+                    <InputField label={t('auth.companyField', lang)} value={employeeRequestForm.companyName} onChange={(v) => setEmployeeRequestForm({ ...employeeRequestForm, companyName: v })} placeholder={t('auth.companyNamePh', lang)} required />
+                    <SelectField label={t('page.joinCompany.desiredRole', lang)} value={employeeRequestForm.desiredRole} onChange={(v) => setEmployeeRequestForm({ ...employeeRequestForm, desiredRole: v })} options={roleJobSelectOptions(lang)} required />
+                    <PrimaryButton type="submit" loading={employeeRequestLoading} className="w-full py-2.5 text-sm">{t('auth.sendRequest', lang)}</PrimaryButton>
                   </form>
                   {employeeRequestSent && (
-                    <p className="text-xs text-emerald-600 mt-2">Demande envoyée avec succès. Elle sera traitée par l'administrateur.</p>
+                    <p className="text-xs text-emerald-600 mt-2">{t('auth.requestSentSuccess', lang)}</p>
                   )}
                 </Card>
               )}
@@ -1790,7 +1836,7 @@ const AuthView: React.FC<{ lang: UiLang; setLang: (l: UiLang) => void; languageO
               {useRealBackend && selectedRole === 'admin' && roleAction === 'create' && (
                 <Card className="p-4 border-violet-200 dark:border-violet-900/50 bg-violet-50/50 dark:bg-violet-950/20">
                   <p className="text-sm text-violet-800 dark:text-violet-300">
-                    Le compte administrateur plateforme est créé par le système. Utilisez l'option “Se connecter”.
+                    {t('auth.adminOnlyLogin', lang)}
                   </p>
                 </Card>
               )}
@@ -1816,7 +1862,7 @@ const AuthView: React.FC<{ lang: UiLang; setLang: (l: UiLang) => void; languageO
               {mode === 'register' && !useRealBackend && (
                 <SelectField label={t('auth.role', lang)} value={role} onChange={v => setRole(v as UserRole)} options={[
                   { value: UserRole.BUSINESS_OWNER, label: t('role.owner.label', lang) },
-                  { value: UserRole.CLIENT, label: 'Client' },
+                  { value: UserRole.CLIENT, label: t('auth.roleClient', lang) },
                   { value: UserRole.ACCOUNTANT, label: t('erole.accountant', lang) },
                 ]} />
               )}
@@ -1834,12 +1880,12 @@ const AuthView: React.FC<{ lang: UiLang; setLang: (l: UiLang) => void; languageO
                   className="w-full text-xs font-medium text-gray-500 hover:text-primary-600 transition-colors"
                 >
                   {backendCheckStatus === 'checking'
-                    ? 'Vérification du backend...'
+                    ? t('auth.backendChecking', lang)
                     : backendCheckStatus === 'ok'
-                    ? 'Backend OK'
+                    ? t('auth.backendOk', lang)
                     : backendCheckStatus === 'ko'
-                    ? 'Backend indisponible'
-                    : 'Tester le backend'}
+                    ? t('auth.backendKo', lang)
+                    : t('auth.backendTest', lang)}
                 </button>
               )}
 
@@ -1918,7 +1964,7 @@ const StatCard: React.FC<{ title: string; value: string; change: string; isPosit
    ADMIN - REGISTRATION REQUESTS
    ================================================================ */
 
-const AdminRegistrationRequestsView: React.FC = () => {
+const AdminRegistrationRequestsView: React.FC<{ lang: UiLang }> = ({ lang }) => {
   const [requests, setRequests] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [rejectReason, setRejectReason] = useState<Record<string, string>>({});
@@ -1955,7 +2001,7 @@ const AdminRegistrationRequestsView: React.FC = () => {
 
   const handleReject = async (id: string) => {
     const reason = rejectReason[id];
-    if (!reason || reason.length < 10) { setError('Le motif du rejet doit contenir au moins 10 caractères.'); return; }
+    if (!reason || reason.length < 10) { setError(t('admin.requests.rejectMinLength', lang)); return; }
     setProcessing(id); setError(''); setAcceptedCredentials(null); setRejectedInfo(null);
     try {
       const result = await RealAPI.rejectRegistrationRequest(id, reason);
@@ -1968,9 +2014,7 @@ const AdminRegistrationRequestsView: React.FC = () => {
   };
 
   const handleDeleteRequest = async (id: string) => {
-    const confirmed = window.confirm(
-      "Supprimer définitivement cette demande ? Si elle est acceptée, l'entreprise et ses utilisateurs seront aussi supprimés.",
-    );
+    const confirmed = window.confirm(t('admin.requests.deleteConfirm', lang));
     if (!confirmed) return;
 
     setProcessing(id); setError(''); setAcceptedCredentials(null); setRejectedInfo(null);
@@ -1978,7 +2022,7 @@ const AdminRegistrationRequestsView: React.FC = () => {
       const result = await RealAPI.deleteRegistrationRequest(id);
       setRequests(prev => prev.filter(r => r.id !== id));
       if (result.deletedCompany) {
-        setError(`Suppression réussie : entreprise supprimée (${result.deletedUsersCount} utilisateur(s) supprimé(s)).`);
+        setError(t('admin.requests.deleteSuccess', lang).replace('{n}', String(result.deletedUsersCount)));
         setErrorSolution(undefined);
       }
     }
@@ -1993,27 +2037,27 @@ const AdminRegistrationRequestsView: React.FC = () => {
   };
 
   const statusBadge = (status: string) => {
-    if (status === 'accepted') return <Badge variant="success"><CheckCircle2 size={12} /> Acceptée</Badge>;
-    if (status === 'rejected') return <Badge variant="danger"><X size={12} /> Rejetée</Badge>;
-    return <Badge variant="warning"><Clock size={12} /> En attente</Badge>;
+    if (status === 'accepted') return <Badge variant="success"><CheckCircle2 size={12} /> {t('admin.requests.accepted', lang)}</Badge>;
+    if (status === 'rejected') return <Badge variant="danger"><X size={12} /> {t('admin.requests.rejected', lang)}</Badge>;
+    return <Badge variant="warning"><Clock size={12} /> {t('admin.requests.pending', lang)}</Badge>;
   };
 
   return (
     <div className="space-y-6">
-      <PageHeader title="Demandes d'inscription" description="Gérez les demandes d'inscription des propriétaires d'entreprise."
+      <PageHeader title={t('admin.requests.title', lang)} description={t('admin.requests.desc', lang)}
         actions={
           <PrimaryButton onClick={loadRequests} variant="outline" className="px-4 py-2 text-sm">
-            <RefreshCw size={14} className={loading ? 'animate-spin' : ''} /> Actualiser
+            <RefreshCw size={14} className={loading ? 'animate-spin' : ''} /> {t('common.refresh', lang)}
           </PrimaryButton>
         }
       />
 
       <div className="flex gap-1 bg-gray-100 dark:bg-gray-800 rounded-xl p-1 w-fit">
-        <button onClick={() => setTab('pending')} className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${tab === 'pending' ? 'bg-white dark:bg-gray-700 shadow-sm text-gray-900 dark:text-white' : 'text-gray-500'}`}>
-          En attente {pending.length > 0 && <span className="ml-1.5 px-1.5 py-0.5 bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400 rounded text-xs font-bold">{pending.length}</span>}
+        <button type="button" onClick={() => setTab('pending')} className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${tab === 'pending' ? 'bg-white dark:bg-gray-700 shadow-sm text-gray-900 dark:text-white' : 'text-gray-500'}`}>
+          {t('admin.requests.pending', lang)} {pending.length > 0 && <span className="ml-1.5 px-1.5 py-0.5 bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400 rounded text-xs font-bold">{pending.length}</span>}
         </button>
-        <button onClick={() => setTab('all')} className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${tab === 'all' ? 'bg-white dark:bg-gray-700 shadow-sm text-gray-900 dark:text-white' : 'text-gray-500'}`}>
-          Toutes ({requests.length})
+        <button type="button" onClick={() => setTab('all')} className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${tab === 'all' ? 'bg-white dark:bg-gray-700 shadow-sm text-gray-900 dark:text-white' : 'text-gray-500'}`}>
+          {t('admin.requests.all', lang)} ({requests.length})
         </button>
       </div>
 
@@ -2025,45 +2069,45 @@ const AdminRegistrationRequestsView: React.FC = () => {
           <div className="flex items-start gap-3 mb-4">
             <div className="p-2 bg-emerald-100 dark:bg-emerald-900/40 rounded-lg"><CheckCircle2 className="w-5 h-5 text-emerald-600" /></div>
             <div>
-              <h3 className="font-bold text-emerald-800 dark:text-emerald-200">Inscription acceptée — {acceptedCredentials.companyName}</h3>
+              <h3 className="font-bold text-emerald-800 dark:text-emerald-200">{t('admin.requests.acceptedTitle', lang)} — {acceptedCredentials.companyName}</h3>
               <p className="text-sm text-emerald-700 dark:text-emerald-300 mt-0.5">
                 {acceptedCredentials.emailSent
-                  ? "Un email contenant les identifiants a été envoyé au propriétaire."
-                  : "⚠ L'email n'a pas pu être envoyé (SMTP non configuré). Communiquez les identifiants manuellement."
+                  ? t('admin.requests.emailSent', lang)
+                  : t('admin.requests.emailNotSent', lang)
                 }
               </p>
             </div>
           </div>
           <div className="bg-white dark:bg-gray-900 rounded-xl p-4 border border-emerald-200 dark:border-emerald-800/40">
-            <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3 flex items-center gap-2"><KeyRound size={12} /> Identifiants générés</p>
+            <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3 flex items-center gap-2"><KeyRound size={12} /> {t('admin.requests.credentials', lang)}</p>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div>
-                <p className="text-[11px] text-gray-400 uppercase tracking-wider">Email</p>
+                <p className="text-[11px] text-gray-400 uppercase tracking-wider">{t('common.email', lang)}</p>
                 <p className="font-mono font-semibold text-sm text-gray-900 dark:text-white">{acceptedCredentials.email}</p>
               </div>
               <div>
-                <p className="text-[11px] text-gray-400 uppercase tracking-wider">Mot de passe temporaire</p>
+                <p className="text-[11px] text-gray-400 uppercase tracking-wider">{t('admin.requests.tempPassword', lang)}</p>
                 <p className="font-mono font-semibold text-sm text-primary-600">{acceptedCredentials.tempPassword}</p>
               </div>
               <div>
-                <p className="text-[11px] text-gray-400 uppercase tracking-wider">Rôle attribué</p>
+                <p className="text-[11px] text-gray-400 uppercase tracking-wider">{t('admin.requests.assignedRole', lang)}</p>
                 <p className="font-semibold text-sm text-gray-900 dark:text-white">{acceptedCredentials.role}</p>
               </div>
             </div>
             <div className="mt-3 flex gap-2">
               <PrimaryButton onClick={handleCopyCredentials} variant="outline" className="px-4 py-2 text-xs">
-                {copied ? <><CheckCircle2 size={12} /> Copié !</> : <><Copy size={12} /> Copier les identifiants</>}
+                {copied ? <><CheckCircle2 size={12} /> {t('admin.requests.copied', lang)}</> : <><Copy size={12} /> {t('admin.requests.copy', lang)}</>}
               </PrimaryButton>
-              <PrimaryButton onClick={() => setAcceptedCredentials(null)} variant="outline" className="px-4 py-2 text-xs">Fermer</PrimaryButton>
+              <PrimaryButton onClick={() => setAcceptedCredentials(null)} variant="outline" className="px-4 py-2 text-xs">{t('admin.requests.close', lang)}</PrimaryButton>
             </div>
           </div>
           {acceptedCredentials.previewUrl && (
             <a href={acceptedCredentials.previewUrl} target="_blank" rel="noopener noreferrer"
               className="mt-3 flex items-center gap-2 text-sm text-primary-600 hover:text-primary-700 font-semibold hover:underline">
-              <Mail size={14} /> 👁️ Voir l'email envoyé (Ethereal)
+              <Mail size={14} /> 👁️ {t('admin.requests.viewEmail', lang)}
             </a>
           )}
-          <p className="text-xs text-emerald-600 dark:text-emerald-400 mt-2 flex items-center gap-1"><Info size={12} /> L'utilisateur devra changer son mot de passe lors de sa première connexion.</p>
+          <p className="text-xs text-emerald-600 dark:text-emerald-400 mt-2 flex items-center gap-1"><Info size={12} /> {t('admin.requests.mustChangePwd', lang)}</p>
         </Card>
       )}
 
@@ -2073,21 +2117,21 @@ const AdminRegistrationRequestsView: React.FC = () => {
           <div className="flex items-start gap-3">
             <div className="p-2 bg-rose-100 dark:bg-rose-900/40 rounded-lg"><X className="w-5 h-5 text-rose-600" /></div>
             <div className="flex-1">
-              <h3 className="font-bold text-rose-800 dark:text-rose-200">Inscription rejetée — {rejectedInfo.name}</h3>
+              <h3 className="font-bold text-rose-800 dark:text-rose-200">{t('admin.requests.rejectedTitle', lang)} — {rejectedInfo.name}</h3>
               <p className="text-sm text-rose-700 dark:text-rose-300 mt-0.5">
                 {rejectedInfo.emailSent
-                  ? `Un email de rejet a été envoyé à ${rejectedInfo.email}.`
-                  : `⚠ L'email n'a pas pu être envoyé à ${rejectedInfo.email} (SMTP non configuré).`
+                  ? `${t('admin.requests.rejectedEmailSent', lang)} ${rejectedInfo.email}.`
+                  : `${t('admin.requests.rejectedEmailNotSent', lang)} ${rejectedInfo.email} ${t('smtp.suffix', lang)}`
                 }
               </p>
               {rejectedInfo.previewUrl && (
                 <a href={rejectedInfo.previewUrl} target="_blank" rel="noopener noreferrer"
                   className="text-xs text-primary-600 hover:text-primary-700 font-semibold hover:underline flex items-center gap-1 mt-1">
-                  <Mail size={12} /> 👁️ Voir l'email de rejet (Ethereal)
+                  <Mail size={12} /> 👁️ {t('admin.requests.viewRejectEmail', lang)}
                 </a>
               )}
-              <p className="text-xs text-rose-500 mt-1"><strong>Motif :</strong> {rejectedInfo.reason}</p>
-              <button onClick={() => setRejectedInfo(null)} className="text-xs text-rose-600 font-medium hover:underline mt-2">Fermer</button>
+              <p className="text-xs text-rose-500 mt-1"><strong>{t('admin.requests.reason', lang)}</strong> {rejectedInfo.reason}</p>
+              <button type="button" onClick={() => setRejectedInfo(null)} className="text-xs text-rose-600 font-medium hover:underline mt-2">{t('admin.requests.close', lang)}</button>
             </div>
           </div>
         </Card>
@@ -2096,7 +2140,7 @@ const AdminRegistrationRequestsView: React.FC = () => {
       {loading ? (
         <div className="flex justify-center py-20"><Loader2 className="animate-spin text-primary-600" size={32} /></div>
       ) : displayed.length === 0 ? (
-        <Card><EmptyState icon={<ShieldCheck size={32} />} title="Aucune demande" description={tab === 'pending' ? "Il n'y a aucune demande en attente de validation." : "Aucune demande d'inscription n'a encore été soumise."} /></Card>
+        <Card><EmptyState icon={<ShieldCheck size={32} />} title={t('admin.requests.empty', lang)} description={tab === 'pending' ? t('admin.requests.emptyPendingDesc', lang) : t('admin.requests.emptyAllDesc', lang)} /></Card>
       ) : (
         <div className="space-y-3">
           {displayed.map(req => (
@@ -2114,24 +2158,24 @@ const AdminRegistrationRequestsView: React.FC = () => {
                     <p className="text-sm text-gray-500 mt-0.5">{req.ownerName} • {req.email}</p>
                     <div className="flex items-center gap-3 mt-1.5">
                       <Badge>{req.companyCategory}</Badge>
-                      <span className="text-xs text-gray-400">{new Date(req.createdAt).toLocaleDateString('fr-FR')}</span>
+                      <span className="text-xs text-gray-400">{new Date(req.createdAt).toLocaleDateString(localeForLang(lang))}</span>
                     </div>
                   </div>
                 </div>
                 {req.status === 'pending' && (
                   <div className="flex flex-col gap-2 lg:w-80 shrink-0">
                     <input
-                      placeholder="Motif du rejet (min. 10 caractères)..."
+                      placeholder={t('admin.requests.rejectReason', lang)}
                       value={rejectReason[req.id] || ''}
                       onChange={e => setRejectReason(prev => ({ ...prev, [req.id]: e.target.value }))}
                       className="px-3.5 py-2.5 rounded-xl bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 text-sm outline-none focus:border-primary-500 transition-colors"
                     />
                     <div className="flex gap-2">
                       <PrimaryButton onClick={() => handleAccept(req.id)} disabled={!!processing} variant="success" className="flex-1 py-2.5 text-xs">
-                        {processing === req.id ? <Loader2 size={14} className="animate-spin" /> : <><CheckCircle2 size={14} /> Accepter</>}
+                        {processing === req.id ? <Loader2 size={14} className="animate-spin" /> : <><CheckCircle2 size={14} /> {t('admin.requests.accept', lang)}</>}
                       </PrimaryButton>
                       <PrimaryButton onClick={() => handleReject(req.id)} disabled={!!processing || !rejectReason[req.id] || rejectReason[req.id].length < 10} variant="danger" className="flex-1 py-2.5 text-xs">
-                        <X size={14} /> Rejeter
+                        <X size={14} /> {t('admin.requests.reject', lang)}
                       </PrimaryButton>
                     </div>
                   </div>
@@ -2139,7 +2183,7 @@ const AdminRegistrationRequestsView: React.FC = () => {
                 {req.status !== 'pending' && tab === 'all' && (
                   <div className="lg:w-48 shrink-0">
                     <PrimaryButton onClick={() => handleDeleteRequest(req.id)} disabled={!!processing} variant="danger" className="w-full py-2.5 text-xs">
-                      {processing === req.id ? <Loader2 size={14} className="animate-spin" /> : <><Trash2 size={14} /> Supprimer</>}
+                      {processing === req.id ? <Loader2 size={14} className="animate-spin" /> : <><Trash2 size={14} /> {t('admin.requests.delete', lang)}</>}
                     </PrimaryButton>
                   </div>
                 )}
@@ -2149,12 +2193,12 @@ const AdminRegistrationRequestsView: React.FC = () => {
         </div>
       )}
 
-      <AdminEmployeeAccessRequestsPanel />
+      <AdminEmployeeAccessRequestsPanel lang={lang} />
     </div>
   );
 };
 
-const AdminEmployeeAccessRequestsPanel: React.FC = () => {
+const AdminEmployeeAccessRequestsPanel: React.FC<{ lang: UiLang }> = ({ lang }) => {
   const [requests, setRequests] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [tab, setTab] = useState<'pending' | 'all'>('pending');
@@ -2212,7 +2256,7 @@ const AdminEmployeeAccessRequestsPanel: React.FC = () => {
   const handleReject = async (id: string) => {
     const reason = rejectReason[id];
     if (!reason || reason.length < 10) {
-      setError('Le motif du rejet doit contenir au moins 10 caractères.');
+      setError(t('admin.requests.rejectMinLength', lang));
       return;
     }
     setProcessing(id);
@@ -2249,32 +2293,29 @@ const AdminEmployeeAccessRequestsPanel: React.FC = () => {
   };
 
   const statusBadge = (status: string) => {
-    if (status === 'accepted') return <Badge variant="success"><CheckCircle2 size={12} /> Acceptée</Badge>;
-    if (status === 'rejected') return <Badge variant="danger"><X size={12} /> Rejetée</Badge>;
-    return <Badge variant="warning"><Clock size={12} /> En attente</Badge>;
+    if (status === 'accepted') return <Badge variant="success"><CheckCircle2 size={12} /> {t('admin.requests.accepted', lang)}</Badge>;
+    if (status === 'rejected') return <Badge variant="danger"><X size={12} /> {t('admin.requests.rejected', lang)}</Badge>;
+    return <Badge variant="warning"><Clock size={12} /> {t('admin.requests.pending', lang)}</Badge>;
   };
-
-  const roleName = (r: string) =>
-    r === 'manager' ? 'Manager' : r === 'accountant' ? 'Comptable' : 'Employé';
 
   return (
     <Card className="p-5">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4">
         <div>
-          <h3 className="font-bold text-gray-900 dark:text-white">Demandes de comptes employés</h3>
-          <p className="text-xs text-gray-500 mt-0.5">Validez ou rejetez les demandes des employés qui veulent rejoindre une entreprise.</p>
+          <h3 className="font-bold text-gray-900 dark:text-white">{t('admin.employeeReq.title', lang)}</h3>
+          <p className="text-xs text-gray-500 mt-0.5">{t('admin.employeeReq.desc', lang)}</p>
         </div>
         <PrimaryButton onClick={loadRequests} variant="outline" className="px-4 py-2 text-xs">
-          <RefreshCw size={14} className={loading ? 'animate-spin' : ''} /> Actualiser
+          <RefreshCw size={14} className={loading ? 'animate-spin' : ''} /> {t('common.refresh', lang)}
         </PrimaryButton>
       </div>
 
       <div className="flex gap-1 bg-gray-100 dark:bg-gray-800 rounded-xl p-1 w-fit mb-4">
-        <button onClick={() => setTab('pending')} className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${tab === 'pending' ? 'bg-white dark:bg-gray-700 shadow-sm text-gray-900 dark:text-white' : 'text-gray-500'}`}>
-          En attente {pending.length > 0 && <span className="ml-1.5 px-1.5 py-0.5 bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400 rounded text-xs font-bold">{pending.length}</span>}
+        <button type="button" onClick={() => setTab('pending')} className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${tab === 'pending' ? 'bg-white dark:bg-gray-700 shadow-sm text-gray-900 dark:text-white' : 'text-gray-500'}`}>
+          {t('admin.requests.pending', lang)} {pending.length > 0 && <span className="ml-1.5 px-1.5 py-0.5 bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400 rounded text-xs font-bold">{pending.length}</span>}
         </button>
-        <button onClick={() => setTab('all')} className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${tab === 'all' ? 'bg-white dark:bg-gray-700 shadow-sm text-gray-900 dark:text-white' : 'text-gray-500'}`}>
-          Toutes ({requests.length})
+        <button type="button" onClick={() => setTab('all')} className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${tab === 'all' ? 'bg-white dark:bg-gray-700 shadow-sm text-gray-900 dark:text-white' : 'text-gray-500'}`}>
+          {t('admin.requests.all', lang)} ({requests.length})
         </button>
       </div>
 
@@ -2282,22 +2323,22 @@ const AdminEmployeeAccessRequestsPanel: React.FC = () => {
 
       {acceptedCredentials && (
         <Card className="p-4 mb-4 border-emerald-200 dark:border-emerald-800/60 bg-emerald-50/50 dark:bg-emerald-950/20">
-          <p className="text-sm text-emerald-800 dark:text-emerald-300 font-semibold">Demande employé acceptée</p>
-          <p className="text-xs text-emerald-700 dark:text-emerald-300 mt-1">{acceptedCredentials.emailSent ? 'Un email avec les identifiants a été envoyé.' : "Email non envoyé (SMTP non configuré). Transmettez les identifiants manuellement."}</p>
+          <p className="text-sm text-emerald-800 dark:text-emerald-300 font-semibold">{t('admin.employeeReq.acceptedBanner', lang)}</p>
+          <p className="text-xs text-emerald-700 dark:text-emerald-300 mt-1">{acceptedCredentials.emailSent ? t('admin.employeeReq.emailSentShort', lang) : t('admin.employeeReq.emailNotSentShort', lang)}</p>
           <div className="mt-3 grid grid-cols-1 sm:grid-cols-3 gap-3">
-            <div><p className="text-[11px] text-gray-400 uppercase tracking-wider">Email</p><p className="font-mono font-semibold text-sm">{acceptedCredentials.email}</p></div>
-            <div><p className="text-[11px] text-gray-400 uppercase tracking-wider">Mot de passe temporaire</p><p className="font-mono font-semibold text-sm text-primary-600">{acceptedCredentials.tempPassword}</p></div>
-            <div><p className="text-[11px] text-gray-400 uppercase tracking-wider">Rôle</p><p className="font-semibold text-sm">{acceptedCredentials.role}</p></div>
+            <div><p className="text-[11px] text-gray-400 uppercase tracking-wider">{t('common.email', lang)}</p><p className="font-mono font-semibold text-sm">{acceptedCredentials.email}</p></div>
+            <div><p className="text-[11px] text-gray-400 uppercase tracking-wider">{t('admin.requests.tempPassword', lang)}</p><p className="font-mono font-semibold text-sm text-primary-600">{acceptedCredentials.tempPassword}</p></div>
+            <div><p className="text-[11px] text-gray-400 uppercase tracking-wider">{t('admin.requests.assignedRole', lang)}</p><p className="font-semibold text-sm">{acceptedCredentials.role}</p></div>
           </div>
           <div className="mt-3 flex gap-2">
             <PrimaryButton onClick={handleCopyCredentials} variant="outline" className="px-4 py-2 text-xs">
-              {copied ? <><CheckCircle2 size={12} /> Copié !</> : <><Copy size={12} /> Copier les identifiants</>}
+              {copied ? <><CheckCircle2 size={12} /> {t('admin.requests.copied', lang)}</> : <><Copy size={12} /> {t('admin.requests.copy', lang)}</>}
             </PrimaryButton>
-            <PrimaryButton onClick={() => setAcceptedCredentials(null)} variant="outline" className="px-4 py-2 text-xs">Fermer</PrimaryButton>
+            <PrimaryButton onClick={() => setAcceptedCredentials(null)} variant="outline" className="px-4 py-2 text-xs">{t('admin.requests.close', lang)}</PrimaryButton>
           </div>
           {acceptedCredentials.previewUrl && (
             <a href={acceptedCredentials.previewUrl} target="_blank" rel="noopener noreferrer" className="mt-2 flex items-center gap-2 text-xs text-primary-600 hover:text-primary-700 font-semibold hover:underline">
-              <Mail size={12} /> 👁️ Voir l'email envoyé (Ethereal)
+              <Mail size={12} /> 👁️ {t('admin.requests.viewEmail', lang)}
             </a>
           )}
         </Card>
@@ -2305,12 +2346,12 @@ const AdminEmployeeAccessRequestsPanel: React.FC = () => {
 
       {rejectedInfo && (
         <Card className="p-4 mb-4 border-rose-200 dark:border-rose-800/60 bg-rose-50/50 dark:bg-rose-950/20">
-          <p className="text-sm text-rose-800 dark:text-rose-300 font-semibold">Demande employé rejetée — {rejectedInfo.name}</p>
-          <p className="text-xs text-rose-700 dark:text-rose-300 mt-1">{rejectedInfo.emailSent ? `Email de rejet envoyé à ${rejectedInfo.email}.` : `Email non envoyé à ${rejectedInfo.email} (SMTP non configuré).`}</p>
-          <p className="text-xs text-rose-500 mt-1"><strong>Motif :</strong> {rejectedInfo.reason}</p>
+          <p className="text-sm text-rose-800 dark:text-rose-300 font-semibold">{t('admin.employeeReq.rejectedBanner', lang)} — {rejectedInfo.name}</p>
+          <p className="text-xs text-rose-700 dark:text-rose-300 mt-1">{rejectedInfo.emailSent ? `${t('admin.requests.rejectedEmailSent', lang)} ${rejectedInfo.email}.` : `${t('admin.requests.rejectedEmailNotSent', lang)} ${rejectedInfo.email} ${t('smtp.suffix', lang)}`}</p>
+          <p className="text-xs text-rose-500 mt-1"><strong>{t('admin.requests.reason', lang)}</strong> {rejectedInfo.reason}</p>
           {rejectedInfo.previewUrl && (
             <a href={rejectedInfo.previewUrl} target="_blank" rel="noopener noreferrer" className="text-xs text-primary-600 hover:text-primary-700 font-semibold hover:underline flex items-center gap-1 mt-1">
-              <Mail size={12} /> 👁️ Voir l'email de rejet (Ethereal)
+              <Mail size={12} /> 👁️ {t('admin.requests.viewRejectEmail', lang)}
             </a>
           )}
         </Card>
@@ -2319,7 +2360,7 @@ const AdminEmployeeAccessRequestsPanel: React.FC = () => {
       {loading ? (
         <div className="flex justify-center py-10"><Loader2 className="animate-spin text-primary-600" size={28} /></div>
       ) : displayed.length === 0 ? (
-        <EmptyState icon={<UserPlus size={26} />} title="Aucune demande employé" description={tab === 'pending' ? "Il n'y a aucune demande employé en attente." : "Aucune demande employé n'a encore été soumise."} />
+        <EmptyState icon={<UserPlus size={26} />} title={t('admin.employeeReq.emptyTitle', lang)} description={tab === 'pending' ? t('admin.employeeReq.emptyPending', lang) : t('admin.employeeReq.emptyAll', lang)} />
       ) : (
         <div className="space-y-3">
           {displayed.map((req) => (
@@ -2329,25 +2370,25 @@ const AdminEmployeeAccessRequestsPanel: React.FC = () => {
                   <div className="flex items-center gap-2 flex-wrap">
                     <p className="font-semibold text-gray-900 dark:text-white">{req.fullName}</p>
                     {statusBadge(req.status)}
-                    <Badge variant="info">{roleName(req.desiredRole)}</Badge>
+                    <Badge variant="info">{roleJobLabel(req.desiredRole, lang)}</Badge>
                   </div>
                   <p className="text-sm text-gray-500 mt-0.5">{req.email}</p>
-                  <p className="text-xs text-gray-400 mt-1">Entreprise: {req.companyName} • {new Date(req.createdAt).toLocaleDateString('fr-FR')}</p>
+                  <p className="text-xs text-gray-400 mt-1">{t('admin.requests.company', lang)}: {req.companyName} • {new Date(req.createdAt).toLocaleDateString(localeForLang(lang))}</p>
                 </div>
                 {req.status === 'pending' && (
                   <div className="flex flex-col gap-2 lg:w-80 shrink-0">
                     <input
-                      placeholder="Motif du rejet (min. 10 caractères)..."
+                      placeholder={t('admin.requests.rejectReason', lang)}
                       value={rejectReason[req.id] || ''}
                       onChange={(e) => setRejectReason((prev) => ({ ...prev, [req.id]: e.target.value }))}
                       className="px-3.5 py-2.5 rounded-xl bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 text-sm outline-none focus:border-primary-500 transition-colors"
                     />
                     <div className="flex gap-2">
                       <PrimaryButton onClick={() => handleAccept(req.id)} disabled={!!processing} variant="success" className="flex-1 py-2.5 text-xs">
-                        {processing === req.id ? <Loader2 size={14} className="animate-spin" /> : <><CheckCircle2 size={14} /> Accepter</>}
+                        {processing === req.id ? <Loader2 size={14} className="animate-spin" /> : <><CheckCircle2 size={14} /> {t('admin.requests.accept', lang)}</>}
                       </PrimaryButton>
                       <PrimaryButton onClick={() => handleReject(req.id)} disabled={!!processing || !rejectReason[req.id] || rejectReason[req.id].length < 10} variant="danger" className="flex-1 py-2.5 text-xs">
-                        <X size={14} /> Rejeter
+                        <X size={14} /> {t('admin.requests.reject', lang)}
                       </PrimaryButton>
                     </div>
                   </div>
@@ -2361,7 +2402,7 @@ const AdminEmployeeAccessRequestsPanel: React.FC = () => {
   );
 };
 
-const EmployeeCompanyJoinView: React.FC = () => {
+const EmployeeCompanyJoinView: React.FC<{ lang: UiLang }> = ({ lang }) => {
   const [companies, setCompanies] = useState<CompanyBackend[]>([]);
   const [myRequests, setMyRequests] = useState<CompanyJoinRequestBackend[]>([]);
   const [loading, setLoading] = useState(true);
@@ -2400,11 +2441,11 @@ const EmployeeCompanyJoinView: React.FC = () => {
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!form.companyId) {
-      setError('Veuillez choisir une entreprise.');
+      setError(t('page.joinCompany.errSelectCompany', lang));
       return;
     }
     if (!form.profileDetails.trim()) {
-      setError('Veuillez remplir les détails du profil selon le rôle choisi.');
+      setError(t('page.joinCompany.errProfile', lang));
       return;
     }
     setSending(true);
@@ -2428,25 +2469,25 @@ const EmployeeCompanyJoinView: React.FC = () => {
 
   const roleDetailsLabel =
     form.desiredRole === 'manager'
-      ? 'Expérience management / équipe'
+      ? t('page.joinCompany.profileManager', lang)
       : form.desiredRole === 'accountant'
-      ? 'Expérience comptable / outils'
-      : 'Compétences principales pour le poste';
+      ? t('page.joinCompany.profileAccountant', lang)
+      : t('page.joinCompany.profileEmployee', lang);
 
   const statusBadge = (status: string) => {
-    if (status === 'accepted') return <Badge variant="success"><CheckCircle2 size={12} /> Acceptée</Badge>;
-    if (status === 'rejected') return <Badge variant="danger"><X size={12} /> Rejetée</Badge>;
-    return <Badge variant="warning"><Clock size={12} /> En attente</Badge>;
+    if (status === 'accepted') return <Badge variant="success"><CheckCircle2 size={12} /> {t('admin.requests.accepted', lang)}</Badge>;
+    if (status === 'rejected') return <Badge variant="danger"><X size={12} /> {t('admin.requests.rejected', lang)}</Badge>;
+    return <Badge variant="warning"><Clock size={12} /> {t('admin.requests.pending', lang)}</Badge>;
   };
 
   return (
     <div className="space-y-6">
       <PageHeader
-        title="Rejoindre une entreprise"
-        description="Choisissez une entreprise, précisez votre rôle exact et envoyez une demande d'affectation."
+        title={t('page.joinCompany.title', lang)}
+        description={t('page.joinCompany.desc', lang)}
         actions={
           <PrimaryButton onClick={loadData} variant="outline" className="px-4 py-2 text-sm">
-            <RefreshCw size={14} className={loading ? 'animate-spin' : ''} /> Actualiser
+            <RefreshCw size={14} className={loading ? 'animate-spin' : ''} /> {t('page.joinCompany.refresh', lang)}
           </PrimaryButton>
         }
       />
@@ -2454,46 +2495,46 @@ const EmployeeCompanyJoinView: React.FC = () => {
       {error && <ErrorAlert message={error} solution={errorSolution} onDismiss={() => { setError(''); setErrorSolution(undefined); }} />}
 
       <Card className="p-6">
-        <h3 className="font-bold text-gray-900 dark:text-white mb-4">Formulaire selon le rôle choisi</h3>
+        <h3 className="font-bold text-gray-900 dark:text-white mb-4">{t('page.joinCompany.formTitle', lang)}</h3>
         <form onSubmit={submit} className="grid grid-cols-1 md:grid-cols-3 gap-4">
           <SelectField
-            label="Entreprise"
+            label={t('auth.companyField', lang)}
             value={form.companyId}
             onChange={(v) => setForm({ ...form, companyId: v })}
             options={[
-              { value: '', label: 'Sélectionner une entreprise' },
+              { value: '', label: t('page.joinCompany.selectCompany', lang) },
               ...companies.map((c) => ({ value: c.id, label: c.name })),
             ]}
             required
           />
           <SelectField
-            label="Rôle demandé"
+            label={t('page.joinCompany.desiredRole', lang)}
             value={form.desiredRole}
             onChange={(v) => setForm({ ...form, desiredRole: v as 'manager' | 'employee' | 'accountant' })}
-            options={ROLE_OPTIONS}
+            options={roleJobSelectOptions(lang)}
             required
           />
           <InputField
             label={roleDetailsLabel}
             value={form.profileDetails}
             onChange={(v) => setForm({ ...form, profileDetails: v })}
-            placeholder="Décrivez brièvement votre profil"
+            placeholder={t('page.joinCompany.profilePlaceholder', lang)}
             required
           />
           <div className="md:col-span-3 flex justify-end">
             <PrimaryButton type="submit" loading={sending} className="px-5 py-2.5 text-sm">
-              Envoyer la demande au propriétaire
+              {t('page.joinCompany.sendToOwner', lang)}
             </PrimaryButton>
           </div>
         </form>
       </Card>
 
       <Card className="p-6">
-        <h3 className="font-bold text-gray-900 dark:text-white mb-4">Mes demandes envoyées</h3>
+        <h3 className="font-bold text-gray-900 dark:text-white mb-4">{t('page.joinCompany.myRequests', lang)}</h3>
         {loading ? (
           <div className="flex justify-center py-10"><Loader2 className="animate-spin text-primary-600" size={28} /></div>
         ) : myRequests.length === 0 ? (
-          <EmptyState icon={<Building2 size={28} />} title="Aucune demande" description="Vous n'avez pas encore envoyé de demande d'affectation." />
+          <EmptyState icon={<Building2 size={28} />} title={t('page.joinCompany.emptySentTitle', lang)} description={t('page.joinCompany.emptySentDesc', lang)} />
         ) : (
           <div className="space-y-3">
             {myRequests.map((req) => (
@@ -2501,9 +2542,9 @@ const EmployeeCompanyJoinView: React.FC = () => {
                 <div className="flex items-start justify-between gap-3">
                   <div>
                     <p className="font-semibold text-gray-900 dark:text-white">{req.company?.name || req.companyId}</p>
-                    <p className="text-xs text-gray-500 mt-0.5">Rôle demandé: {req.desiredRole}</p>
+                    <p className="text-xs text-gray-500 mt-0.5">{t('join.manager.requestedRole', lang)} {roleJobLabel(req.desiredRole, lang)}</p>
                     {req.profileDetails && <p className="text-xs text-gray-400 mt-1">{req.profileDetails}</p>}
-                    {req.rejectionReason && <p className="text-xs text-rose-500 mt-1">Motif: {req.rejectionReason}</p>}
+                    {req.rejectionReason && <p className="text-xs text-rose-500 mt-1">{t('page.joinCompany.reasonPrefix', lang)} {req.rejectionReason}</p>}
                   </div>
                   {statusBadge(req.status)}
                 </div>
@@ -2516,7 +2557,7 @@ const EmployeeCompanyJoinView: React.FC = () => {
   );
 };
 
-const CompanyJoinRequestsManager: React.FC<{ companyId: string }> = ({ companyId }) => {
+const CompanyJoinRequestsManager: React.FC<{ companyId: string; lang: UiLang }> = ({ companyId, lang }) => {
   const [requests, setRequests] = useState<CompanyJoinRequestBackend[]>([]);
   const [loading, setLoading] = useState(true);
   const [processing, setProcessing] = useState<string | null>(null);
@@ -2562,7 +2603,7 @@ const CompanyJoinRequestsManager: React.FC<{ companyId: string }> = ({ companyId
   const onReject = async (id: string) => {
     const reason = rejectReason[id];
     if (!reason || reason.length < 10) {
-      setError('Le motif du rejet doit contenir au moins 10 caractères.');
+      setError(t('admin.requests.rejectMinLength', lang));
       return;
     }
     setProcessing(id);
@@ -2585,16 +2626,16 @@ const CompanyJoinRequestsManager: React.FC<{ companyId: string }> = ({ companyId
   return (
     <Card className="p-6">
       <div className="flex items-center justify-between mb-4">
-        <h3 className="font-bold text-gray-900 dark:text-white">Demandes de rattachement à l'entreprise</h3>
+        <h3 className="font-bold text-gray-900 dark:text-white">{t('join.manager.title', lang)}</h3>
         <PrimaryButton onClick={load} variant="outline" className="px-4 py-2 text-xs">
-          <RefreshCw size={14} className={loading ? 'animate-spin' : ''} /> Actualiser
+          <RefreshCw size={14} className={loading ? 'animate-spin' : ''} /> {t('common.refresh', lang)}
         </PrimaryButton>
       </div>
       {error && <ErrorAlert message={error} solution={errorSolution} onDismiss={() => { setError(''); setErrorSolution(undefined); }} />}
       {loading ? (
         <div className="flex justify-center py-10"><Loader2 className="animate-spin text-primary-600" size={28} /></div>
       ) : pending.length === 0 ? (
-        <EmptyState icon={<UserPlus size={26} />} title="Aucune demande en attente" description="Les demandes de rattachement employé apparaîtront ici." />
+        <EmptyState icon={<UserPlus size={26} />} title={t('join.manager.emptyTitle', lang)} description={t('join.manager.emptyDesc', lang)} />
       ) : (
         <div className="space-y-3">
           {pending.map((req) => (
@@ -2603,22 +2644,22 @@ const CompanyJoinRequestsManager: React.FC<{ companyId: string }> = ({ companyId
                 <div>
                   <p className="font-semibold text-gray-900 dark:text-white">{req.requesterUser?.name || req.requesterUserId}</p>
                   <p className="text-sm text-gray-500">{req.requesterUser?.email}</p>
-                  <p className="text-xs text-gray-400 mt-1">Rôle demandé: {req.desiredRole}</p>
+                  <p className="text-xs text-gray-400 mt-1">{t('join.manager.requestedRole', lang)} {roleJobLabel(req.desiredRole, lang)}</p>
                   {req.profileDetails && <p className="text-xs text-gray-500 mt-1">{req.profileDetails}</p>}
                 </div>
                 <div className="lg:w-80 space-y-2">
                   <input
-                    placeholder="Motif de rejet (min. 10 caractères)..."
+                    placeholder={t('join.manager.rejectPh', lang)}
                     value={rejectReason[req.id] || ''}
                     onChange={(e) => setRejectReason((prev) => ({ ...prev, [req.id]: e.target.value }))}
                     className="w-full px-3.5 py-2.5 rounded-xl bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 text-sm outline-none focus:border-primary-500 transition-colors"
                   />
                   <div className="flex gap-2">
                     <PrimaryButton onClick={() => onAccept(req.id)} disabled={!!processing} variant="success" className="flex-1 py-2.5 text-xs">
-                      {processing === req.id ? <Loader2 size={14} className="animate-spin" /> : <><CheckCircle2 size={14} /> Accepter</>}
+                      {processing === req.id ? <Loader2 size={14} className="animate-spin" /> : <><CheckCircle2 size={14} /> {t('admin.requests.accept', lang)}</>}
                     </PrimaryButton>
                     <PrimaryButton onClick={() => onReject(req.id)} disabled={!!processing || !rejectReason[req.id] || rejectReason[req.id].length < 10} variant="danger" className="flex-1 py-2.5 text-xs">
-                      <X size={14} /> Rejeter
+                      <X size={14} /> {t('admin.requests.reject', lang)}
                     </PrimaryButton>
                   </div>
                 </div>
@@ -2635,7 +2676,7 @@ const CompanyJoinRequestsManager: React.FC<{ companyId: string }> = ({ companyId
    ADMIN - EMPLOYEES
    ================================================================ */
 
-const AdminEmployeesView: React.FC<{ companyId: string }> = ({ companyId }) => {
+const AdminEmployeesView: React.FC<{ companyId: string; lang: UiLang }> = ({ companyId, lang }) => {
   const [employees, setEmployees] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
@@ -2686,16 +2727,15 @@ const AdminEmployeesView: React.FC<{ companyId: string }> = ({ companyId }) => {
     navigator.clipboard.writeText(text).then(() => { setCopiedEmp(true); setTimeout(() => setCopiedEmp(false), 2000); });
   };
 
-  const roleName = (r: string) => r === 'manager' ? 'Manager' : r === 'accountant' ? 'Comptable' : r === 'owner' ? 'Propriétaire' : 'Employé';
   const roleColor = (r: string): 'info' | 'warning' | 'success' | 'default' => r === 'manager' ? 'info' : r === 'accountant' ? 'warning' : r === 'owner' ? 'success' : 'default';
 
   return (
     <div className="space-y-6">
-      <PageHeader title="Gestion des employés" description="Ajoutez, gérez et invitez vos collaborateurs."
+      <PageHeader title={t('emp.title', lang)} description={t('emp.desc', lang)}
         actions={
           <div className="flex gap-2">
-            <PrimaryButton onClick={loadEmployees} variant="outline" className="px-4 py-2 text-sm"><RefreshCw size={14} className={loading ? 'animate-spin' : ''} /></PrimaryButton>
-            <PrimaryButton onClick={() => { setShowForm(!showForm); setError(''); setCreatedCredentials(null); }} className="px-4 py-2.5 text-sm"><UserPlus size={16} /> Ajouter</PrimaryButton>
+            <PrimaryButton onClick={loadEmployees} variant="outline" className="px-4 py-2 text-sm"><RefreshCw size={14} className={loading ? 'animate-spin' : ''} /> {t('common.refresh', lang)}</PrimaryButton>
+            <PrimaryButton onClick={() => { setShowForm(!showForm); setError(''); setCreatedCredentials(null); }} className="px-4 py-2.5 text-sm"><UserPlus size={16} /> {t('emp.add', lang)}</PrimaryButton>
           </div>
         }
       />
@@ -2708,58 +2748,58 @@ const AdminEmployeesView: React.FC<{ companyId: string }> = ({ companyId }) => {
           <div className="flex items-start gap-3 mb-4">
             <div className="p-2 bg-emerald-100 dark:bg-emerald-900/40 rounded-lg"><UserCheck className="w-5 h-5 text-emerald-600" /></div>
             <div>
-              <h3 className="font-bold text-emerald-800 dark:text-emerald-200">Employé créé — {createdCredentials.name}</h3>
+              <h3 className="font-bold text-emerald-800 dark:text-emerald-200">{t('emp.createdBanner', lang)} — {createdCredentials.name}</h3>
               <p className="text-sm text-emerald-700 dark:text-emerald-300 mt-0.5">
                 {createdCredentials.emailSent
-                  ? "Un email d'invitation avec les identifiants a été envoyé."
-                  : "⚠ L'email n'a pas pu être envoyé (SMTP non configuré). Communiquez les identifiants manuellement ci-dessous."
+                  ? t('emp.emailSent', lang)
+                  : t('emp.emailNotSent', lang)
                 }
               </p>
             </div>
           </div>
           <div className="bg-white dark:bg-gray-900 rounded-xl p-4 border border-emerald-200 dark:border-emerald-800/40">
-            <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3 flex items-center gap-2"><KeyRound size={12} /> Identifiants de connexion</p>
+            <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3 flex items-center gap-2"><KeyRound size={12} /> {t('emp.loginCredentials', lang)}</p>
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
               <div>
-                <p className="text-[11px] text-gray-400 uppercase tracking-wider">Email</p>
+                <p className="text-[11px] text-gray-400 uppercase tracking-wider">{t('common.email', lang)}</p>
                 <p className="font-mono font-semibold text-sm text-gray-900 dark:text-white">{createdCredentials.email}</p>
               </div>
               <div>
-                <p className="text-[11px] text-gray-400 uppercase tracking-wider">Mot de passe temporaire</p>
+                <p className="text-[11px] text-gray-400 uppercase tracking-wider">{t('admin.requests.tempPassword', lang)}</p>
                 <p className="font-mono font-semibold text-sm text-primary-600">{createdCredentials.tempPassword}</p>
               </div>
               <div>
-                <p className="text-[11px] text-gray-400 uppercase tracking-wider">Rôle</p>
+                <p className="text-[11px] text-gray-400 uppercase tracking-wider">{t('emp.role', lang)}</p>
                 <p className="font-semibold text-sm text-gray-900 dark:text-white">{createdCredentials.role}</p>
               </div>
             </div>
             <div className="mt-3 flex gap-2">
               <PrimaryButton onClick={handleCopyEmpCredentials} variant="outline" className="px-4 py-2 text-xs">
-                {copiedEmp ? <><CheckCircle2 size={12} /> Copié !</> : <><Copy size={12} /> Copier les identifiants</>}
+                {copiedEmp ? <><CheckCircle2 size={12} /> {t('emp.copied', lang)}</> : <><Copy size={12} /> {t('emp.copyIds', lang)}</>}
               </PrimaryButton>
-              <PrimaryButton onClick={() => setCreatedCredentials(null)} variant="outline" className="px-4 py-2 text-xs">Fermer</PrimaryButton>
+              <PrimaryButton onClick={() => setCreatedCredentials(null)} variant="outline" className="px-4 py-2 text-xs">{t('emp.close', lang)}</PrimaryButton>
             </div>
           </div>
           {createdCredentials.previewUrl && (
             <a href={createdCredentials.previewUrl} target="_blank" rel="noopener noreferrer"
               className="mt-3 flex items-center gap-2 text-sm text-primary-600 hover:text-primary-700 font-semibold hover:underline">
-              <Mail size={14} /> 👁️ Voir l'email d'invitation (Ethereal)
+              <Mail size={14} /> 👁️ {t('emp.viewInviteEmail', lang)}
             </a>
           )}
-          <p className="text-xs text-emerald-600 dark:text-emerald-400 mt-2 flex items-center gap-1"><Info size={12} /> L'employé devra changer son mot de passe lors de sa première connexion.</p>
+          <p className="text-xs text-emerald-600 dark:text-emerald-400 mt-2 flex items-center gap-1"><Info size={12} /> {t('emp.mustChangePwd', lang)}</p>
         </Card>
       )}
 
       {showForm && (
         <Card className="p-6">
-          <h3 className="font-bold text-gray-900 dark:text-white mb-4 flex items-center gap-2"><UserPlus size={18} className="text-primary-600" /> Nouvel employé</h3>
+          <h3 className="font-bold text-gray-900 dark:text-white mb-4 flex items-center gap-2"><UserPlus size={18} className="text-primary-600" /> {t('emp.newEmployee', lang)}</h3>
           <form onSubmit={handleCreate} className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <InputField label="Nom complet" value={form.name} onChange={v => setForm({ ...form, name: v })} placeholder="Marie Martin" required />
-            <InputField label="Email" type="email" value={form.email} onChange={v => setForm({ ...form, email: v })} placeholder="marie@entreprise.com" required icon={<Mail size={16} />} />
-            <SelectField label="Rôle" value={form.role} onChange={v => setForm({ ...form, role: v as any })} options={ROLE_OPTIONS} required />
+            <InputField label={t('emp.fullName', lang)} value={form.name} onChange={v => setForm({ ...form, name: v })} placeholder={t('emp.fullNamePh', lang)} required />
+            <InputField label={t('emp.email', lang)} type="email" value={form.email} onChange={v => setForm({ ...form, email: v })} placeholder={t('emp.emailPh', lang)} required icon={<Mail size={16} />} />
+            <SelectField label={t('emp.role', lang)} value={form.role} onChange={v => setForm({ ...form, role: v as any })} options={roleJobSelectOptions(lang)} required />
             <div className="md:col-span-3 flex justify-end gap-2 pt-2">
-              <PrimaryButton onClick={() => setShowForm(false)} variant="outline" className="px-5 py-2.5 text-sm">Annuler</PrimaryButton>
-              <PrimaryButton type="submit" loading={submitting} className="px-5 py-2.5 text-sm">Créer et envoyer l'invitation</PrimaryButton>
+              <PrimaryButton onClick={() => setShowForm(false)} variant="outline" className="px-5 py-2.5 text-sm">{t('emp.cancel', lang)}</PrimaryButton>
+              <PrimaryButton type="submit" loading={submitting} className="px-5 py-2.5 text-sm">{t('emp.createInvite', lang)}</PrimaryButton>
             </div>
           </form>
         </Card>
@@ -2768,17 +2808,17 @@ const AdminEmployeesView: React.FC<{ companyId: string }> = ({ companyId }) => {
       {loading ? (
         <div className="flex justify-center py-20"><Loader2 className="animate-spin text-primary-600" size={32} /></div>
       ) : employees.length === 0 ? (
-        <Card><EmptyState icon={<Users size={32} />} title="Aucun employé" description="Vous n'avez pas encore ajouté d'employés à votre entreprise."
-          action={<PrimaryButton onClick={() => setShowForm(true)} className="px-5 py-2.5 text-sm"><UserPlus size={16} /> Ajouter le premier employé</PrimaryButton>}
+        <Card><EmptyState icon={<Users size={32} />} title={t('emp.empty', lang)} description={t('emp.emptyDesc', lang)}
+          action={<PrimaryButton onClick={() => setShowForm(true)} className="px-5 py-2.5 text-sm"><UserPlus size={16} /> {t('emp.addFirst', lang)}</PrimaryButton>}
         /></Card>
       ) : (
         <Card className="overflow-hidden">
           <table className="w-full text-left">
             <thead className="bg-gray-50 dark:bg-gray-800/50 border-b border-gray-100 dark:border-gray-800">
               <tr>
-                <th className="px-6 py-3.5 text-xs font-semibold text-gray-500 uppercase tracking-wider">Employé</th>
-                <th className="px-6 py-3.5 text-xs font-semibold text-gray-500 uppercase tracking-wider">Email</th>
-                <th className="px-6 py-3.5 text-xs font-semibold text-gray-500 uppercase tracking-wider">Rôle</th>
+                <th className="px-6 py-3.5 text-xs font-semibold text-gray-500 uppercase tracking-wider">{t('emp.colEmployee', lang)}</th>
+                <th className="px-6 py-3.5 text-xs font-semibold text-gray-500 uppercase tracking-wider">{t('common.email', lang)}</th>
+                <th className="px-6 py-3.5 text-xs font-semibold text-gray-500 uppercase tracking-wider">{t('emp.role', lang)}</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100 dark:divide-gray-800">
@@ -2793,7 +2833,7 @@ const AdminEmployeesView: React.FC<{ companyId: string }> = ({ companyId }) => {
                     </div>
                   </td>
                   <td className="px-6 py-4 text-sm text-gray-500">{emp.email}</td>
-                  <td className="px-6 py-4"><Badge variant={roleColor(emp.role)}>{roleName(emp.role)}</Badge></td>
+                  <td className="px-6 py-4"><Badge variant={roleColor(emp.role)}>{roleJobLabel(emp.role, lang)}</Badge></td>
                 </tr>
               ))}
             </tbody>
@@ -2801,7 +2841,7 @@ const AdminEmployeesView: React.FC<{ companyId: string }> = ({ companyId }) => {
         </Card>
       )}
 
-      <CompanyJoinRequestsManager companyId={companyId} />
+      <CompanyJoinRequestsManager companyId={companyId} lang={lang} />
     </div>
   );
 };
@@ -2810,7 +2850,7 @@ const AdminEmployeesView: React.FC<{ companyId: string }> = ({ companyId }) => {
    ADMIN DASHBOARD
    ================================================================ */
 
-const AdminDashboardView: React.FC<{ tenant: Tenant | null }> = ({ tenant }) => {
+const AdminDashboardView: React.FC<{ tenant: Tenant | null; lang: UiLang }> = ({ tenant, lang }) => {
   const handleExport = () => {
     const rows = REVENUE_DATA.map((r) => ({
       month: r.name,
@@ -2823,32 +2863,32 @@ const AdminDashboardView: React.FC<{ tenant: Tenant | null }> = ({ tenant }) => 
 
   return (
   <div className="space-y-6">
-    <PageHeader title="Tableau de bord" description={`Vue d'ensemble pour ${tenant?.name || 'votre entreprise'}`}
-      actions={<PrimaryButton onClick={handleExport} className="px-5 py-2.5 text-sm"><Download size={16} /> Exporter</PrimaryButton>}
+    <PageHeader title={t('page.dashboard.title', lang)} description={`${t('page.dashboard.overview', lang)} ${tenant?.name || t('page.dashboard.companyFallback', lang)}`}
+      actions={<PrimaryButton onClick={handleExport} className="px-5 py-2.5 text-sm"><Download size={16} /> {t('dash.export', lang)}</PrimaryButton>}
     />
 
     <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
       <div className="lg:col-span-2 grid grid-cols-1 sm:grid-cols-2 gap-4">
-        <StatCard title="Revenus totaux" value="452 109 €" change="+12.5%" isPositive icon={<TrendingUp size={20} />} />
-        <StatCard title="Charges" value="12 890 €" change="-4.2%" isPositive={false} icon={<Wallet size={20} />} />
-        <StatCard title="Rétention" value="94.2%" change="+2.1%" isPositive icon={<Users size={20} />} />
-        <StatCard title="Bénéfice net" value="38 720 €" change="+8.1%" isPositive icon={<CheckCircle2 size={20} />} />
+        <StatCard title={t('dash.totalRevenue', lang)} value="452 109 €" change="+12.5%" isPositive icon={<TrendingUp size={20} />} />
+        <StatCard title={t('dash.totalExpenses', lang)} value="12 890 €" change="-4.2%" isPositive={false} icon={<Wallet size={20} />} />
+        <StatCard title={t('dash.retention', lang)} value="94.2%" change="+2.1%" isPositive icon={<Users size={20} />} />
+        <StatCard title={t('dash.netProfit', lang)} value="38 720 €" change="+8.1%" isPositive icon={<CheckCircle2 size={20} />} />
       </div>
-      <SmartInsightCard />
+      <SmartInsightCard lang={lang} />
     </div>
 
     <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-      <AIForecastPanel />
-      <AICostOptimizationPanel />
+      <AIForecastPanel lang={lang} />
+      <AICostOptimizationPanel lang={lang} />
     </div>
 
     <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-      <AIMonthlyReportCard />
+      <AIMonthlyReportCard lang={lang} />
     </div>
 
     <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
       <Card className="p-6">
-        <h2 className="font-bold text-gray-900 dark:text-white mb-6">Revenus (6 mois)</h2>
+        <h2 className="font-bold text-gray-900 dark:text-white mb-6">{t('dash.chartRevenue6m', lang)}</h2>
         <div className="h-[280px]">
           <ResponsiveContainer width="100%" height="100%">
             <AreaChart data={REVENUE_DATA}>
@@ -2865,7 +2905,7 @@ const AdminDashboardView: React.FC<{ tenant: Tenant | null }> = ({ tenant }) => 
         </div>
       </Card>
       <Card className="p-6">
-        <h2 className="font-bold text-gray-900 dark:text-white mb-6">Dépenses par catégorie</h2>
+        <h2 className="font-bold text-gray-900 dark:text-white mb-6">{t('dash.chartExpensesCat', lang)}</h2>
         <div className="h-[280px]">
           <ResponsiveContainer width="100%" height="100%">
             <BarChart data={REVENUE_DATA}>
@@ -2884,42 +2924,63 @@ const AdminDashboardView: React.FC<{ tenant: Tenant | null }> = ({ tenant }) => 
    ADMIN - INVOICES
    ================================================================ */
 
-const AdminInvoicesView: React.FC<{ user: User }> = ({ user }) => {
+const AdminInvoicesView: React.FC<{ lang: UiLang }> = ({ lang }) => {
   const [data, setData] = useState<Invoice[]>([]);
   const [loading, setLoading] = useState(true);
   const [adding, setAdding] = useState(false);
-  useEffect(() => { BackendAPI.getInvoices().then(d => { setData(d); setLoading(false); }); }, []);
+  const [err, setErr] = useState('');
+  useEffect(() => {
+    void (async () => {
+      try {
+        const rows = await RealAPI.getInvoices();
+        setData(rows.map(invoiceFromBackend));
+      } catch (e) {
+        const { message } = getErrorMessage(e);
+        setErr(message);
+      } finally {
+        setLoading(false);
+      }
+    })();
+  }, []);
 
   const handleAddInvoice = async () => {
     if (adding) return;
     setAdding(true);
+    setErr('');
     const ts = Date.now();
-    const invoice = await BackendAPI.createInvoice({
-      number: `INV-${String(ts).slice(-6)}`,
-      clientName: 'Nouveau client',
-      date: new Date().toISOString().slice(0, 10),
-      dueDate: new Date(Date.now() + 7 * 86400000).toISOString().slice(0, 10),
-      total: 1000,
-      status: 'Sent',
-    });
-    setData((prev) => [invoice, ...prev]);
-    setAdding(false);
+    try {
+      const row = await RealAPI.createInvoice({
+        number: `INV-${String(ts).slice(-6)}`,
+        clientName: t('page.invoices.defaultClient', lang),
+        date: new Date().toISOString().slice(0, 10),
+        dueDate: new Date(Date.now() + 7 * 86400000).toISOString().slice(0, 10),
+        total: 1000,
+        status: 'Sent',
+      });
+      setData((prev) => [invoiceFromBackend(row), ...prev]);
+    } catch (e) {
+      const { message } = getErrorMessage(e);
+      setErr(message);
+    } finally {
+      setAdding(false);
+    }
   };
 
   return (
     <div className="space-y-6">
-      <PageHeader title="Factures" description="Gérez vos factures et suivez les paiements."
-        actions={<PrimaryButton onClick={handleAddInvoice} loading={adding} className="px-5 py-2.5 text-sm"><Plus size={16} /> Nouvelle facture</PrimaryButton>}
+      <PageHeader title={t('page.invoices.title', lang)} description={t('page.invoices.desc', lang)}
+        actions={<PrimaryButton onClick={handleAddInvoice} loading={adding} className="px-5 py-2.5 text-sm"><Plus size={16} /> {t('page.invoices.new', lang)}</PrimaryButton>}
       />
+      {err && <ErrorAlert message={err} onDismiss={() => setErr('')} />}
       <Card className="overflow-hidden">
         {loading ? <div className="p-20 flex justify-center"><Loader2 className="animate-spin text-primary-600" /></div> : (
           <table className="w-full text-left">
             <thead className="bg-gray-50 dark:bg-gray-800/50 border-b border-gray-100 dark:border-gray-800">
               <tr>
-                <th className="px-6 py-3.5 text-xs font-semibold text-gray-500 uppercase tracking-wider">Document</th>
-                <th className="px-6 py-3.5 text-xs font-semibold text-gray-500 uppercase tracking-wider">Client</th>
-                <th className="px-6 py-3.5 text-xs font-semibold text-gray-500 uppercase tracking-wider text-right">Montant</th>
-                <th className="px-6 py-3.5 text-xs font-semibold text-gray-500 uppercase tracking-wider text-right">Statut</th>
+                <th className="px-6 py-3.5 text-xs font-semibold text-gray-500 uppercase tracking-wider">{t('page.invoices.document', lang)}</th>
+                <th className="px-6 py-3.5 text-xs font-semibold text-gray-500 uppercase tracking-wider">{t('page.invoices.client', lang)}</th>
+                <th className="px-6 py-3.5 text-xs font-semibold text-gray-500 uppercase tracking-wider text-right">{t('page.invoices.amount', lang)}</th>
+                <th className="px-6 py-3.5 text-xs font-semibold text-gray-500 uppercase tracking-wider text-right">{t('page.invoices.status', lang)}</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100 dark:divide-gray-800">
@@ -2932,7 +2993,7 @@ const AdminInvoicesView: React.FC<{ user: User }> = ({ user }) => {
                   <td className="px-6 py-4 font-medium text-sm text-gray-700 dark:text-gray-300">{inv.clientName}</td>
                   <td className="px-6 py-4 text-right font-bold text-gray-900 dark:text-white">{inv.total.toLocaleString()} €</td>
                   <td className="px-6 py-4 text-right">
-                    <Badge variant={inv.status === 'Paid' ? 'success' : inv.status === 'Overdue' ? 'danger' : 'warning'}>{inv.status}</Badge>
+                    <Badge variant={inv.status === 'Paid' ? 'success' : inv.status === 'Overdue' ? 'danger' : 'warning'}>{invoiceStatusLabel(inv.status, lang)}</Badge>
                   </td>
                 </tr>
               ))}
@@ -2948,7 +3009,7 @@ const AdminInvoicesView: React.FC<{ user: User }> = ({ user }) => {
    ADMIN - EXPENSES
    ================================================================ */
 
-const AdminExpensesView: React.FC<{ useRealBackend: boolean }> = ({ useRealBackend }) => {
+const AdminExpensesView: React.FC<{ lang: UiLang }> = ({ lang }) => {
   const [data, setData] = useState<Expense[]>([]);
   const [adding, setAdding] = useState(false);
   const [error, setError] = useState('');
@@ -2965,11 +3026,6 @@ const AdminExpensesView: React.FC<{ useRealBackend: boolean }> = ({ useRealBacke
 
   useEffect(() => {
     const load = async () => {
-      if (!useRealBackend) {
-        const mock = await BackendAPI.getExpenses();
-        setData(mock);
-        return;
-      }
       try {
         const rows = await RealAPI.getExpenses();
         setData(rows.map(mapBackendExpenseToUi));
@@ -2979,33 +3035,21 @@ const AdminExpensesView: React.FC<{ useRealBackend: boolean }> = ({ useRealBacke
       }
     };
     void load();
-  }, [useRealBackend]);
+  }, []);
 
   const handleAddExpense = async () => {
     if (adding) return;
     setAdding(true);
     setError('');
     try {
-      if (!useRealBackend) {
-        const expense = await BackendAPI.createExpense({
-          description: 'Nouvelle dépense',
-          category: 'Operations',
-          amount: 250,
-          date: new Date().toISOString().slice(0, 10),
-          status: 'Pending',
-          reportedBy: 'Administrator',
-        });
-        setData((prev) => [expense, ...prev]);
-      } else {
-        const expense = await RealAPI.createExpense({
-          amount: 250,
-          expenseDate: new Date().toISOString().slice(0, 10),
-          category: 'auto',
-          vendor: 'AWS',
-          notes: 'Auto generated expense for AI categorization flow',
-        });
-        setData((prev) => [mapBackendExpenseToUi(expense), ...prev]);
-      }
+      const expense = await RealAPI.createExpense({
+        amount: 250,
+        expenseDate: new Date().toISOString().slice(0, 10),
+        category: 'auto',
+        vendor: 'AWS',
+        notes: 'Auto generated expense for AI categorization flow',
+      });
+      setData((prev) => [mapBackendExpenseToUi(expense), ...prev]);
     } catch (e) {
       const { message } = getErrorMessage(e);
       setError(message);
@@ -3016,7 +3060,7 @@ const AdminExpensesView: React.FC<{ useRealBackend: boolean }> = ({ useRealBacke
 
   return (
     <div className="space-y-6">
-      <PageHeader title="Dépenses" description="Suivez et catégorisez toutes vos dépenses."
+      <PageHeader title={t('page.expenses.title', lang)} description={t('page.expenses.desc', lang)}
         actions={<PrimaryButton onClick={handleAddExpense} loading={adding} className="px-5 py-2.5 text-sm"><Plus size={16} /> Enregistrer</PrimaryButton>}
       />
       {error && <ErrorAlert message={error} onDismiss={() => setError('')} />}
@@ -3044,38 +3088,55 @@ const AdminExpensesView: React.FC<{ useRealBackend: boolean }> = ({ useRealBacke
    ADMIN - CLIENTS
    ================================================================ */
 
-const AdminClientsView: React.FC = () => {
+const AdminClientsView: React.FC<{ lang: UiLang }> = ({ lang }) => {
   const [data, setData] = useState<Client[]>([]);
   const [adding, setAdding] = useState(false);
-  useEffect(() => { BackendAPI.getClients().then(setData); }, []);
+  const [err, setErr] = useState('');
+  useEffect(() => {
+    void (async () => {
+      try {
+        const rows = await RealAPI.getClients();
+        setData(rows.map(clientFromBackend));
+      } catch (e) {
+        setErr(getErrorMessage(e).message);
+      }
+    })();
+  }, []);
 
   const handleAddClient = async () => {
     if (adding) return;
     setAdding(true);
-    const client = await BackendAPI.createClient({
-      name: 'Nouveau client',
-      email: `client${Date.now().toString().slice(-4)}@example.com`,
-      phone: '+216 00 000 000',
-      company: 'Nouvelle entreprise',
-    });
-    setData((prev) => [client, ...prev]);
-    setAdding(false);
+    setErr('');
+    try {
+      const row = await RealAPI.createClient({
+        name: 'Nouveau client',
+        email: `client${Date.now().toString().slice(-4)}@example.com`,
+        phone: '+216 00 000 000',
+        companyName: 'Nouvelle entreprise',
+      });
+      setData((prev) => [clientFromBackend(row), ...prev]);
+    } catch (e) {
+      setErr(getErrorMessage(e).message);
+    } finally {
+      setAdding(false);
+    }
   };
 
   return (
     <div className="space-y-6">
-      <PageHeader title="Portefeuille clients" description="Gérez vos relations client."
+      <PageHeader title={t('page.clients.title', lang)} description={t('page.clients.desc', lang)}
         actions={<PrimaryButton onClick={handleAddClient} loading={adding} className="px-5 py-2.5 text-sm"><UserPlus size={16} /> Ajouter un client</PrimaryButton>}
       />
+      {err && <ErrorAlert message={err} onDismiss={() => setErr('')} />}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
         {data.map(c => (
           <Card key={c.id} hover className="p-6">
             <div className="flex items-start gap-4">
               <div className="w-12 h-12 bg-primary-50 dark:bg-primary-900/20 rounded-xl flex items-center justify-center text-primary-600 font-bold text-lg shrink-0">
-                {c.company.charAt(0)}
+                {(c.company || c.name).charAt(0)}
               </div>
               <div className="min-w-0">
-                <h3 className="font-bold text-gray-900 dark:text-white truncate">{c.company}</h3>
+                <h3 className="font-bold text-gray-900 dark:text-white truncate">{c.company || c.name}</h3>
                 <p className="text-sm text-gray-500 truncate">{c.name}</p>
                 <p className="text-xs text-gray-400 mt-1 truncate">{c.email}</p>
               </div>
@@ -3096,12 +3157,12 @@ const AdminClientsView: React.FC = () => {
    ADMIN - ANALYTICS
    ================================================================ */
 
-const AdminAnalyticsView: React.FC = () => (
+const AdminAnalyticsView: React.FC<{ lang: UiLang }> = ({ lang }) => (
   <div className="space-y-6">
-    <PageHeader title="Analytiques" description="Performance et tendances financières." />
+    <PageHeader title={t('page.analytics.title', lang)} description={t('page.analytics.desc', lang)} />
     <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
       <Card className="lg:col-span-2 p-6">
-        <h2 className="font-bold text-gray-900 dark:text-white mb-6">Revenus vs Dépenses</h2>
+        <h2 className="font-bold text-gray-900 dark:text-white mb-6">{t('page.analytics.revenueVsExpenses', lang)}</h2>
         <div className="h-[360px]">
           <ResponsiveContainer width="100%" height="100%">
             <AreaChart data={REVENUE_DATA}>
@@ -3117,17 +3178,17 @@ const AdminAnalyticsView: React.FC = () => (
       </Card>
       <div className="space-y-6">
         <Card className="p-6">
-          <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">Efficacité trésorerie</p>
+          <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">{t('page.analytics.cashEfficiency', lang)}</p>
           <p className="text-3xl font-bold text-gray-900 dark:text-white mb-3">82.4%</p>
           <div className="w-full bg-gray-100 dark:bg-gray-800 h-2 rounded-full overflow-hidden">
             <div className="w-[82.4%] h-full bg-emerald-500 rounded-full transition-all"></div>
           </div>
-          <p className="mt-3 text-xs text-gray-500 font-medium">+12% par rapport au trimestre précédent</p>
+          <p className="mt-3 text-xs text-gray-500 font-medium">{t('page.analytics.vsPrevQuarter', lang)}</p>
         </Card>
         <div className="bg-gradient-to-br from-primary-600 to-primary-700 p-6 rounded-2xl text-white shadow-lg shadow-primary-600/15">
           <BarChart3 size={24} className="mb-4 opacity-80" />
-          <h3 className="font-bold mb-1">Prévision Automatisée</h3>
-          <p className="text-primary-100 text-sm leading-relaxed">Les projections Q3 indiquent un excédent de 14% basé sur les métriques de rétention.</p>
+          <h3 className="font-bold mb-1">{t('page.analytics.autoForecast', lang)}</h3>
+          <p className="text-primary-100 text-sm leading-relaxed">{t('page.analytics.autoForecastBody', lang)}</p>
         </div>
       </div>
     </div>
@@ -3138,24 +3199,35 @@ const AdminAnalyticsView: React.FC = () => (
    ADMIN - AUDIT LOG
    ================================================================ */
 
-const AdminAuditLogView: React.FC = () => {
+const AdminAuditLogView: React.FC<{ lang: UiLang }> = ({ lang }) => {
   const [logs, setLogs] = useState<AuditLog[]>([]);
-  useEffect(() => { BackendAPI.getAuditLogs().then(setLogs); }, []);
+  const [err, setErr] = useState('');
+  useEffect(() => {
+    void (async () => {
+      try {
+        const rows = await RealAPI.getActivityLogs();
+        setLogs(rows.map(auditFromBackend));
+      } catch (e) {
+        setErr(getErrorMessage(e).message);
+      }
+    })();
+  }, []);
 
   return (
     <div className="space-y-6">
-      <PageHeader title="Journal d'audit" description="Historique des actions et modifications." />
+      <PageHeader title={t('page.audit.title', lang)} description={t('page.audit.desc', lang)} />
+      {err && <ErrorAlert message={err} onDismiss={() => setErr('')} />}
       <Card className="divide-y divide-gray-100 dark:divide-gray-800 overflow-hidden">
         {logs.map(log => (
           <div key={log.id} className="px-6 py-4 flex items-center gap-4 hover:bg-gray-50/50 dark:hover:bg-gray-800/30 transition-colors">
             <div className="p-2.5 bg-gray-100 dark:bg-gray-800 rounded-xl text-gray-400"><History size={18} /></div>
             <div className="flex-1 min-w-0">
               <p className="font-semibold text-sm text-gray-900 dark:text-white truncate">{log.action}</p>
-              <p className="text-xs text-gray-400 mt-0.5">Par {log.user} • {log.entity}</p>
+              <p className="text-xs text-gray-400 mt-0.5">{t('page.audit.by', lang)} {log.user} • {log.entity}</p>
             </div>
             <div className="text-right shrink-0">
-              <p className="text-sm font-semibold text-primary-600">{new Date(log.timestamp).toLocaleTimeString('fr-FR')}</p>
-              <p className="text-[11px] text-gray-400">{new Date(log.timestamp).toLocaleDateString('fr-FR')}</p>
+              <p className="text-sm font-semibold text-primary-600">{new Date(log.timestamp).toLocaleTimeString(localeForLang(lang))}</p>
+              <p className="text-[11px] text-gray-400">{new Date(log.timestamp).toLocaleDateString(localeForLang(lang))}</p>
             </div>
           </div>
         ))}
@@ -3168,7 +3240,7 @@ const AdminAuditLogView: React.FC = () => {
    ADMIN - SETTINGS
    ================================================================ */
 
-const AdminSettingsView: React.FC<{ tenant: Tenant | null; onUpdate: (t: Tenant) => void; companyId?: string }> = ({ tenant, onUpdate, companyId }) => {
+const AdminSettingsView: React.FC<{ tenant: Tenant | null; onUpdate: (t: Tenant) => void; companyId?: string; lang: UiLang; setLang: (l: UiLang) => void }> = ({ tenant, onUpdate, companyId, lang, setLang }) => {
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState('');
   const [errorSolution, setErrorSolution] = useState<string | undefined>();
@@ -3189,9 +3261,8 @@ const AdminSettingsView: React.FC<{ tenant: Tenant | null; onUpdate: (t: Tenant)
       if (companyId) {
         const updated = await RealAPI.updateCompany(companyId, { name: formData.name, logo: formData.logo, matriculeFiscal: formData.matriculeFiscal, taxRate: formData.taxRate, currency: formData.currency });
         onUpdate({ id: updated.id, name: updated.name, logo: updated.logo, currency: updated.currency, taxRate: updated.taxRate });
-      } else if (tenant) {
-        const updated = await BackendAPI.updateTenant(formData);
-        onUpdate(updated);
+      } else {
+        throw new Error(t('settings.noCompanyLinked', lang));
       }
       setSaved(true); setTimeout(() => setSaved(false), 3000);
     } catch (e) { const { message, solution } = getErrorMessage(e); setError(message); setErrorSolution(solution); }
@@ -3200,19 +3271,19 @@ const AdminSettingsView: React.FC<{ tenant: Tenant | null; onUpdate: (t: Tenant)
 
   return (
     <div className="max-w-3xl space-y-6">
-      <PageHeader title="Paramètres" description={companyId ? 'Configurez les informations de votre entreprise.' : 'Paramètres de votre profil.'} />
+      <PageHeader title={t('settings.title', lang)} description={companyId ? t('page.settings.companyDesc', lang) : t('page.settings.profileDesc', lang)} />
       {error && <ErrorAlert message={error} solution={errorSolution} onDismiss={() => { setError(''); setErrorSolution(undefined); }} />}
-      {saved && <SuccessAlert message="Modifications enregistrées avec succès." />}
+      {saved && <SuccessAlert message={t('settings.saveSuccess', lang)} />}
       <Card className="p-6">
         <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-          <InputField label="Nom de l'entreprise" value={formData.name || ''} onChange={v => setFormData({ ...formData, name: v })} icon={<Building2 size={16} />} />
+          <InputField label={t('settings.companyName', lang)} value={formData.name || ''} onChange={v => setFormData({ ...formData, name: v })} icon={<Building2 size={16} />} />
           {companyId && (
             <>
-              <InputField label="Logo (URL)" type="url" value={formData.logo || ''} onChange={v => setFormData({ ...formData, logo: v })} placeholder="https://..." />
-              <InputField label="Matricule fiscal" value={formData.matriculeFiscal || ''} onChange={v => setFormData({ ...formData, matriculeFiscal: v })} icon={<Hash size={16} />} />
+              <InputField label={t('settings.logoUrl', lang)} type="url" value={formData.logo || ''} onChange={v => setFormData({ ...formData, logo: v })} placeholder={t('settings.logoPh', lang)} />
+              <InputField label={t('settings.taxId', lang)} value={formData.matriculeFiscal || ''} onChange={v => setFormData({ ...formData, matriculeFiscal: v })} icon={<Hash size={16} />} />
             </>
           )}
-          <SelectField label="Langue" value="fr" onChange={() => {}} options={[
+          <SelectField label={t('settings.language', lang)} value={resolveStaticUiLang(lang)} onChange={(v) => { const next = v as Lang; setLang(next); localStorage.setItem('finops_lang', next); }} options={[
             { value: 'en', label: 'English' },
             { value: 'fr', label: 'Français' },
             { value: 'ar', label: 'العربية' },
@@ -3220,7 +3291,7 @@ const AdminSettingsView: React.FC<{ tenant: Tenant | null; onUpdate: (t: Tenant)
         </div>
         <div className="mt-6 pt-6 border-t border-gray-100 dark:border-gray-800 flex justify-end">
           <PrimaryButton onClick={handleSave} loading={isSaving} className="px-6 py-3 text-sm">
-            <CheckCircle2 size={16} /> Enregistrer les modifications
+            <CheckCircle2 size={16} /> {t('settings.saveChanges', lang)}
           </PrimaryButton>
         </div>
       </Card>
@@ -3232,24 +3303,33 @@ const AdminSettingsView: React.FC<{ tenant: Tenant | null; onUpdate: (t: Tenant)
    CLIENT PAGES
    ================================================================ */
 
-const ClientDashboardView: React.FC<{ user: User }> = ({ user }) => {
+const ClientDashboardView: React.FC<{ user: User; lang: UiLang }> = ({ user, lang }) => {
   const [invoices, setInvoices] = useState<Invoice[]>([]);
-  useEffect(() => { BackendAPI.getInvoices(user).then(setInvoices); }, [user]);
+  useEffect(() => {
+    void (async () => {
+      try {
+        const rows = await RealAPI.getInvoices();
+        setInvoices(rows.map(invoiceFromBackend));
+      } catch {
+        setInvoices([]);
+      }
+    })();
+  }, [user]);
   const outstanding = invoices.filter(i => i.status !== 'Paid').reduce((a, b) => a + b.total, 0);
 
   return (
     <div className="space-y-6">
-      <PageHeader title="Mon Portail" description={`Bienvenue, ${user.name}`}
-        actions={<PrimaryButton onClick={() => window.alert('Support: support@finops.com')} className="px-5 py-2.5 text-sm"><MessageSquare size={16} /> Contacter le support</PrimaryButton>}
+      <PageHeader title={t('page.clientPortal.title', lang)} description={`${t('page.clientPortal.welcome', lang)}, ${user.name}`}
+        actions={<PrimaryButton onClick={() => window.alert('Support: support@finops.com')} className="px-5 py-2.5 text-sm"><MessageSquare size={16} /> {t('nav.support', lang)}</PrimaryButton>}
       />
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <StatCard title="Solde dû" value={`${outstanding.toLocaleString()} €`} change="En cours" isPositive={false} icon={<CreditCard size={20} />} />
-        <StatCard title="Progression projet" value="85%" change="Phase 4/5" isPositive icon={<TrendingUp size={20} />} />
-        <StatCard title="Total réglé" value="25 400 €" change="Cumulé" isPositive icon={<CheckCircle2 size={20} />} />
+        <StatCard title={t('page.client.balanceDue', lang)} value={`${outstanding.toLocaleString(localeForLang(lang))} €`} change={t('page.client.inProgress', lang)} isPositive={false} icon={<CreditCard size={20} />} />
+        <StatCard title={t('page.client.projectStep', lang)} value="85%" change={t('page.client.phase', lang)} isPositive icon={<TrendingUp size={20} />} />
+        <StatCard title={t('page.client.paidTotal', lang)} value="25 400 €" change={t('page.client.cumulative', lang)} isPositive icon={<CheckCircle2 size={20} />} />
       </div>
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <Card className="p-6">
-          <h2 className="font-bold text-gray-900 dark:text-white mb-4">Dernières factures</h2>
+          <h2 className="font-bold text-gray-900 dark:text-white mb-4">{t('page.client.lastInvoices', lang)}</h2>
           <div className="space-y-3">
             {invoices.slice(0, 3).map(inv => (
               <div key={inv.id} className="p-4 bg-gray-50 dark:bg-gray-800/50 rounded-xl flex items-center justify-between hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors">
@@ -3262,18 +3342,18 @@ const ClientDashboardView: React.FC<{ user: User }> = ({ user }) => {
                 </div>
                 <div className="text-right">
                   <p className="font-bold text-gray-900 dark:text-white">{inv.total.toLocaleString()} €</p>
-                  <Badge variant={inv.status === 'Paid' ? 'success' : 'danger'}>{inv.status}</Badge>
+                  <Badge variant={inv.status === 'Paid' ? 'success' : 'danger'}>{invoiceStatusLabel(inv.status, lang)}</Badge>
                 </div>
               </div>
             ))}
           </div>
         </Card>
         <Card className="p-6">
-          <h2 className="font-bold text-gray-900 dark:text-white mb-6">Avancement du projet</h2>
+          <h2 className="font-bold text-gray-900 dark:text-white mb-6">{t('page.client.projectProgressTitle', lang)}</h2>
           <div className="space-y-6">
-            <TimelineStep title="Design" status="Terminé" done />
-            <TimelineStep title="Infrastructure" status="En cours" active />
-            <TimelineStep title="Audit conformité" status="À venir" />
+            <TimelineStep title={t('page.client.timeline.design', lang)} status={t('page.client.timeline.done', lang)} done />
+            <TimelineStep title={t('page.client.timeline.infra', lang)} status={t('page.client.timeline.active', lang)} active />
+            <TimelineStep title={t('page.client.timeline.audit', lang)} status={t('page.client.timeline.upcoming', lang)} />
           </div>
         </Card>
       </div>
@@ -3294,28 +3374,41 @@ const TimelineStep: React.FC<{ title: string; status: string; done?: boolean; ac
   </div>
 );
 
-const ClientInvoicesView: React.FC<{ user: User }> = ({ user }) => {
+const ClientInvoicesView: React.FC<{ user: User; lang: UiLang }> = ({ user, lang }) => {
   const [data, setData] = useState<Invoice[]>([]);
   const [paying, setPaying] = useState<string | null>(null);
-  useEffect(() => { BackendAPI.getInvoices(user).then(setData); }, [user]);
+  useEffect(() => {
+    void (async () => {
+      try {
+        const rows = await RealAPI.getInvoices();
+        setData(rows.map(invoiceFromBackend));
+      } catch {
+        setData([]);
+      }
+    })();
+  }, [user]);
 
   const onPay = async (id: string) => {
     setPaying(id);
-    await BackendAPI.payInvoice(id);
-    const d = await BackendAPI.getInvoices(user);
-    setData(d); setPaying(null);
+    try {
+      await RealAPI.payInvoice(id);
+      const rows = await RealAPI.getInvoices();
+      setData(rows.map(invoiceFromBackend));
+    } finally {
+      setPaying(null);
+    }
   };
 
   return (
     <div className="space-y-6">
-      <PageHeader title="Mes Factures" description="Consultez et réglez vos factures." />
+      <PageHeader title={t('page.clientInvoices.title', lang)} description={t('page.clientInvoices.desc', lang)} />
       <Card className="overflow-hidden">
         <table className="w-full text-left">
           <thead className="bg-gray-50 dark:bg-gray-800/50 border-b border-gray-100 dark:border-gray-800">
             <tr>
-              <th className="px-6 py-3.5 text-xs font-semibold text-gray-500 uppercase tracking-wider">Document</th>
-              <th className="px-6 py-3.5 text-xs font-semibold text-gray-500 uppercase tracking-wider text-right">Montant</th>
-              <th className="px-6 py-3.5 text-xs font-semibold text-gray-500 uppercase tracking-wider text-right">Action</th>
+              <th className="px-6 py-3.5 text-xs font-semibold text-gray-500 uppercase tracking-wider">{t('page.clientInv.document', lang)}</th>
+              <th className="px-6 py-3.5 text-xs font-semibold text-gray-500 uppercase tracking-wider text-right">{t('page.clientInv.amount', lang)}</th>
+              <th className="px-6 py-3.5 text-xs font-semibold text-gray-500 uppercase tracking-wider text-right">{t('page.clientInv.action', lang)}</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-100 dark:divide-gray-800">
@@ -3323,14 +3416,14 @@ const ClientInvoicesView: React.FC<{ user: User }> = ({ user }) => {
               <tr key={inv.id} className="hover:bg-gray-50/50 dark:hover:bg-gray-800/30 transition-colors">
                 <td className="px-6 py-4">
                   <p className="font-semibold text-sm text-gray-900 dark:text-white">{inv.number}</p>
-                  <p className="text-xs text-gray-400">Échéance {inv.dueDate}</p>
+                  <p className="text-xs text-gray-400">{t('page.clientInv.due', lang)} {inv.dueDate}</p>
                 </td>
-                <td className="px-6 py-4 font-bold text-right text-gray-900 dark:text-white">{inv.total.toLocaleString()} €</td>
+                <td className="px-6 py-4 font-bold text-right text-gray-900 dark:text-white">{inv.total.toLocaleString(localeForLang(lang))} €</td>
                 <td className="px-6 py-4 text-right">
                   {inv.status === 'Paid' ? (
-                    <Badge variant="success"><PackageCheck size={12} /> Réglée</Badge>
+                    <Badge variant="success"><PackageCheck size={12} /> {t('page.clientInv.paid', lang)}</Badge>
                   ) : (
-                    <PrimaryButton onClick={() => onPay(inv.id)} loading={paying === inv.id} className="px-4 py-2 text-xs">Payer</PrimaryButton>
+                    <PrimaryButton onClick={() => onPay(inv.id)} loading={paying === inv.id} className="px-4 py-2 text-xs">{t('page.clientInv.pay', lang)}</PrimaryButton>
                   )}
                 </td>
               </tr>
@@ -3342,9 +3435,9 @@ const ClientInvoicesView: React.FC<{ user: User }> = ({ user }) => {
   );
 };
 
-const ClientProjectsView: React.FC = () => (
+const ClientProjectsView: React.FC<{ lang: UiLang }> = ({ lang }) => (
   <div className="space-y-6">
-    <PageHeader title="Projets actifs" description="Suivez l'avancement de vos projets." />
+    <PageHeader title={t('page.projects.title', lang)} description={t('page.projects.desc', lang)} />
     <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
       <Card className="p-8 text-center">
         <div className="w-14 h-14 bg-emerald-50 dark:bg-emerald-900/20 text-emerald-500 rounded-2xl flex items-center justify-center mx-auto mb-4"><CheckCircle2 size={28} /></div>
@@ -3362,23 +3455,23 @@ const ClientProjectsView: React.FC = () => (
   </div>
 );
 
-const ClientSupportView: React.FC = () => (
+const ClientSupportView: React.FC<{ lang: UiLang }> = ({ lang }) => (
   <div className="max-w-4xl mx-auto space-y-6">
     <div className="bg-gradient-to-br from-primary-600 to-primary-700 p-8 sm:p-10 rounded-2xl text-white shadow-xl shadow-primary-600/15 flex flex-col md:flex-row items-center gap-8">
       <div className="w-24 h-24 bg-white/15 rounded-2xl flex items-center justify-center shrink-0 backdrop-blur-sm border border-white/20">
         <MessageSquare size={40} />
       </div>
       <div>
-        <h1 className="text-2xl font-bold mb-2">Support Direct</h1>
-        <p className="text-primary-100 mb-6">Nos ingénieurs sont prêts à vous assister. Temps de réponse moyen : 4 min.</p>
+        <h1 className="text-2xl font-bold mb-2">{t('page.support.title', lang)}</h1>
+        <p className="text-primary-100 mb-6">{t('page.support.subtitle', lang)}</p>
         <PrimaryButton onClick={() => {}} variant="outline" className="bg-white text-primary-600 border-0 px-6 py-3 text-sm hover:bg-primary-50">
-          Ouvrir un ticket
+          {t('page.support.ticket', lang)}
         </PrimaryButton>
       </div>
     </div>
     <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
       <Card className="p-6">
-        <h3 className="font-bold text-gray-900 dark:text-white mb-4">Documentation</h3>
+        <h3 className="font-bold text-gray-900 dark:text-white mb-4">{t('page.support.docs', lang)}</h3>
         <div className="space-y-2">
           {['Guide de facturation', 'Conditions SLA', 'Spécifications API'].map(title => (
             <div key={title} className="flex items-center justify-between p-3 bg-gray-50 dark:bg-gray-800 rounded-xl hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors cursor-pointer group">
@@ -3391,7 +3484,7 @@ const ClientSupportView: React.FC = () => (
       <Card className="p-6 flex flex-col items-center justify-center text-center">
         <div className="flex items-center gap-2 text-emerald-500 font-bold mb-2">
           <div className="w-2.5 h-2.5 bg-emerald-500 rounded-full animate-pulse"></div>
-          Tous les systèmes en ligne
+          {t('page.support.online', lang)}
         </div>
         <p className="text-xs text-gray-400">Disponibilité : 99.99%</p>
       </Card>

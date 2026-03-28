@@ -9,7 +9,10 @@
     "dev:backend": "npm --prefix backend run start:dev",
     "dev:all": "concurrently -n FRONTEND,BACKEND -c cyan,magenta \"npm run dev:frontend\" \"npm run dev:backend\"",
     "build": "vite build",
-    "preview": "vite preview"
+    "build:backend": "npm --prefix backend run build",
+    "build:all": "npm run build && npm run build:backend",
+    "preview": "vite preview",
+    "test:backend": "npm --prefix backend test -- --passWithNoTests"
   },
   "dependencies": {
     "lucide-react": "^0.563.0",

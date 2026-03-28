@@ -17,6 +17,7 @@ import { Client } from './entities/client.entity';
 import { Transaction } from './entities/transaction.entity';
 import { Expense } from './entities/expense.entity';
 import { ActivityLog } from './entities/activity-log.entity';
+import { InvoiceRecord } from './entities/invoice-record.entity';
 import { AuthModule } from './auth/auth.module';
 import { MailModule } from './mail/mail.module';
 import { RegistrationModule } from './registration/registration.module';
@@ -32,6 +33,7 @@ import { MembershipsModule } from './memberships/memberships.module';
 import { SubscriptionsModule } from './subscriptions/subscriptions.module';
 import { AiModule } from './ai/ai.module';
 import { NotificationsModule } from './notifications/notifications.module';
+import { InvoicesModule } from './invoices/invoices.module';
 
 function resolveDatasourceOptions(): DataSourceOptions {
   const entities = [
@@ -47,9 +49,10 @@ function resolveDatasourceOptions(): DataSourceOptions {
     Transaction,
     Expense,
     ActivityLog,
+    InvoiceRecord,
   ];
 
-  const dbType = (process.env.DB_TYPE || 'sqlite').toLowerCase();
+  const dbType = (process.env.DB_TYPE || 'mysql').toLowerCase();
 
   if (dbType === 'mysql') {
     return {
@@ -66,6 +69,7 @@ function resolveDatasourceOptions(): DataSourceOptions {
     };
   }
 
+  // Opt-in only: set DB_TYPE=sqlite for local file DB
   return {
     type: 'better-sqlite3',
     database: process.env.DB_SQLITE_PATH || join(process.cwd(), 'data', 'finops.db'),
@@ -93,6 +97,7 @@ function resolveDatasourceOptions(): DataSourceOptions {
     SubscriptionsModule,
     AiModule,
     NotificationsModule,
+    InvoicesModule,
     BootstrapModule,
   ],
   controllers: [AppController],

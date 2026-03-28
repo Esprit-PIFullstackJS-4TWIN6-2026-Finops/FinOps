@@ -125,6 +125,8 @@ const translations: Record<Lang, Record<string, string>> = {
     'conn.retry': 'Réessayer',
     'conn.demoMode': 'Mode démo',
     'conn.demoNote': 'Le mode démo utilise des données fictives uniquement.',
+    'conn.dbHint':
+      'Si le backend ne démarre pas (erreur MySQL) : lancez MySQL, ou dans backend/.env utilisez DB_TYPE=sqlite et DB_SQLITE_PATH=./data/finops.db (voir .env.example).',
 
     // Loading
     'loading.connecting': 'Connexion au serveur...',
@@ -137,6 +139,7 @@ const translations: Record<Lang, Record<string, string>> = {
     'nav.analytics': 'Analytiques',
     'nav.audit': "Journal d'audit",
     'nav.employees': 'Employés',
+    'nav.joinCompany': 'Rejoindre entreprise',
     'nav.settings': 'Paramètres',
     'nav.logout': 'Déconnexion',
     'nav.requests': "Demandes d'inscription",
@@ -144,6 +147,7 @@ const translations: Record<Lang, Record<string, string>> = {
     'nav.myInvoices': 'Mes factures',
     'nav.projects': 'Projets',
     'nav.support': 'Support',
+    'nav.newCompany': '+ Société',
 
     // Admin - Registration requests
     'admin.requests.title': "Demandes d'inscription",
@@ -178,6 +182,134 @@ const translations: Record<Lang, Record<string, string>> = {
     'admin.requests.company': 'Entreprise',
     'admin.requests.owner': 'Propriétaire',
     'admin.requests.date': 'Date',
+    'admin.requests.emptyPendingDesc': "Il n'y a aucune demande en attente de validation.",
+    'admin.requests.emptyAllDesc': "Aucune demande d'inscription n'a encore été soumise.",
+    'admin.requests.deleteConfirm': "Supprimer définitivement cette demande ? Si elle est acceptée, l'entreprise et ses utilisateurs seront aussi supprimés.",
+    'admin.requests.delete': 'Supprimer',
+    'admin.requests.deleteSuccess': 'Suppression réussie : entreprise supprimée. Utilisateurs supprimés : {n}.',
+
+    'admin.employeeReq.title': 'Demandes de comptes employés',
+    'admin.employeeReq.desc': 'Validez ou rejetez les demandes des employés qui veulent rejoindre une entreprise.',
+    'admin.employeeReq.acceptedBanner': 'Demande employé acceptée',
+    'admin.employeeReq.rejectedBanner': 'Demande employé rejetée',
+    'admin.employeeReq.emailSentShort': 'Un email avec les identifiants a été envoyé.',
+    'admin.employeeReq.emailNotSentShort': "Email non envoyé (SMTP non configuré). Transmettez les identifiants manuellement.",
+    'admin.employeeReq.emptyTitle': 'Aucune demande employé',
+    'admin.employeeReq.emptyPending': "Il n'y a aucune demande employé en attente.",
+    'admin.employeeReq.emptyAll': "Aucune demande employé n'a encore été soumise.",
+
+    'join.manager.title': "Demandes de rattachement à l'entreprise",
+    'join.manager.rejectPh': 'Motif de rejet (min. 10 caractères)...',
+    'join.manager.emptyTitle': 'Aucune demande en attente',
+    'join.manager.emptyDesc': 'Les demandes de rattachement employé apparaîtront ici.',
+    'join.manager.requestedRole': 'Rôle demandé:',
+
+    'page.joinCompany.formTitle': 'Formulaire selon le rôle choisi',
+    'page.joinCompany.selectCompany': 'Sélectionner une entreprise',
+    'page.joinCompany.desiredRole': 'Rôle demandé',
+    'page.joinCompany.profilePlaceholder': 'Décrivez brièvement votre profil',
+    'page.joinCompany.sendToOwner': 'Envoyer la demande au propriétaire',
+    'page.joinCompany.myRequests': 'Mes demandes envoyées',
+    'page.joinCompany.emptySentTitle': 'Aucune demande',
+    'page.joinCompany.emptySentDesc': "Vous n'avez pas encore envoyé de demande d'affectation.",
+    'page.joinCompany.profileManager': 'Expérience management / équipe',
+    'page.joinCompany.profileAccountant': 'Expérience comptable / outils',
+    'page.joinCompany.profileEmployee': 'Compétences principales pour le poste',
+    'page.joinCompany.errSelectCompany': 'Veuillez choisir une entreprise.',
+    'page.joinCompany.errProfile': 'Veuillez remplir les détails du profil selon le rôle choisi.',
+    'page.joinCompany.reasonPrefix': 'Motif:',
+
+    'auth.tabCreate': 'Créer un compte',
+    'auth.ownerHint': "Pour un compte propriétaire, utilisez le formulaire d'inscription entreprise.",
+    'auth.openOwnerForm': 'Ouvrir le formulaire propriétaire',
+    'auth.employeeRequestTitle': 'Formulaire de demande de compte employé',
+    'auth.employeeFullName': 'Nom complet',
+    'auth.proEmail': 'Email professionnel',
+    'auth.companyField': 'Entreprise',
+    'auth.companyNamePh': 'Nom de votre entreprise',
+    'auth.sendRequest': 'Envoyer la demande',
+    'auth.requestSentSuccess': "Demande envoyée avec succès. Elle sera traitée par l'administrateur.",
+    'auth.adminOnlyLogin': 'Le compte administrateur plateforme est créé par le système. Utilisez l’option « Se connecter ».',
+    'auth.backendChecking': 'Vérification du backend...',
+    'auth.backendOk': 'Backend OK',
+    'auth.backendKo': 'Backend indisponible',
+    'auth.backendTest': 'Tester le backend',
+    'auth.roleClient': 'Client',
+
+    'smtp.suffix': '(SMTP non configuré).',
+
+    'company.promptNewName': 'Nom de la nouvelle entreprise:',
+    'company.promptCategory': 'Catégorie (technology, retail, services, manufacturing, construction, healthcare, finance, other):',
+
+    'page.invoices.new': 'Nouvelle facture',
+    'page.invoices.document': 'Document',
+    'page.invoices.client': 'Client',
+    'page.invoices.amount': 'Montant',
+    'page.invoices.status': 'Statut',
+    'page.invoices.defaultClient': 'Nouveau client',
+
+    'inv.status.Sent': 'Envoyée',
+    'inv.status.Paid': 'Payée',
+    'inv.status.Overdue': 'En retard',
+
+    'dash.export': 'Exporter',
+    'dash.chartRevenue6m': 'Revenus (6 mois)',
+    'dash.chartExpensesCat': 'Dépenses par catégorie',
+
+    'page.client.timeline.design': 'Design',
+    'page.client.timeline.infra': 'Infrastructure',
+    'page.client.timeline.audit': 'Audit conformité',
+    'page.client.timeline.done': 'Terminé',
+    'page.client.timeline.active': 'En cours',
+    'page.client.timeline.upcoming': 'À venir',
+
+    'loading.brand': 'FinOps Platform',
+    'conn.apiRunningMsg': 'FinOps API running',
+
+    'ai.insight.badge': 'Intelligence IA',
+    'ai.insight.title': 'Briefing exécutif',
+    'ai.insight.loading': 'Analyse en cours...',
+    'ai.insight.unavailable': 'Analyse IA momentanément indisponible. Réessayez sous peu.',
+
+    'ai.forecast.title': 'Prévision financière IA',
+    'ai.forecast.nextMonth': 'Mois prochain',
+    'ai.forecast.next3m': '3 prochains mois',
+    'ai.forecast.trend': 'Tendance',
+    'ai.forecast.unavailable': 'Prévision indisponible pour le moment.',
+    'ai.forecast.trend.increasing': 'En hausse',
+    'ai.forecast.trend.stable': 'Stable',
+    'ai.forecast.trend.decreasing': 'En baisse',
+
+    'ai.cost.title': 'Optimisation des coûts IA',
+    'ai.cost.savingsPrefix': 'Économies mensuelles estimées :',
+    'ai.cost.unavailable': "Données d'optimisation indisponibles.",
+
+    'ai.report.title': 'Rapport mensuel IA',
+    'ai.report.totalExpenses': 'Dépenses totales :',
+    'ai.report.unavailable': 'Rapport mensuel indisponible.',
+
+    'ai.chat.title': 'Assistant FinOps IA',
+    'ai.chat.placeholder': 'Posez une question...',
+    'ai.chat.ask': 'Envoyer',
+    'ai.chat.ready': 'Assistant prêt.',
+    'ai.chat.unavailable': 'Assistant indisponible. Réessayez.',
+    'ai.chat.openTitle': "Ouvrir l'assistant IA",
+
+    'reg.val.companyMin': "Le nom de l'entreprise doit contenir au moins 2 caractères.",
+    'reg.val.companyMax': "Le nom de l'entreprise ne doit pas dépasser 100 caractères.",
+    'reg.val.category': 'Veuillez sélectionner une catégorie.',
+    'reg.val.emailRequired': "L'email est obligatoire.",
+    'reg.val.emailInvalid': 'Veuillez fournir un email valide (ex: nom@entreprise.com).',
+    'reg.val.ownerMin': 'Le nom du propriétaire doit contenir au moins 2 caractères.',
+    'reg.val.ownerChars': "Le nom ne doit contenir que des lettres, espaces, tirets ou apostrophes.",
+    'reg.val.phoneInvalid': 'Numéro de téléphone invalide (ex: +216 XX XXX XXX).',
+
+    'page.analytics.revenueVsExpenses': 'Revenus vs Dépenses',
+    'page.analytics.cashEfficiency': 'Efficacité trésorerie',
+    'page.analytics.vsPrevQuarter': '+12% par rapport au trimestre précédent',
+    'page.analytics.autoForecast': 'Prévision automatisée',
+    'page.analytics.autoForecastBody':
+      'Les projections Q3 indiquent un excédent de 14% basé sur les métriques de rétention.',
 
     // Employees
     'emp.title': 'Gestion des employés',
@@ -193,6 +325,20 @@ const translations: Record<Lang, Record<string, string>> = {
     'emp.created': 'Employé créé avec succès',
     'emp.emailSent': "Un email d'invitation a été envoyé à l'employé.",
     'emp.emailNotSent': "⚠ L'email n'a pas pu être envoyé. Communiquez les identifiants manuellement.",
+    'emp.newEmployee': 'Nouvel employé',
+    'emp.fullName': 'Nom complet',
+    'emp.fullNamePh': 'Marie Martin',
+    'emp.emailPh': 'marie@entreprise.com',
+    'emp.createInvite': "Créer et envoyer l'invitation",
+    'emp.addFirst': 'Ajouter le premier employé',
+    'emp.colEmployee': 'Employé',
+    'emp.loginCredentials': 'Identifiants de connexion',
+    'emp.copyIds': 'Copier les identifiants',
+    'emp.copied': 'Copié !',
+    'emp.close': 'Fermer',
+    'emp.viewInviteEmail': "Voir l'email d'invitation (Ethereal)",
+    'emp.mustChangePwd': "L'employé devra changer son mot de passe lors de sa première connexion.",
+    'emp.createdBanner': 'Employé créé',
 
     // Settings
     'settings.title': 'Paramètres',
@@ -205,6 +351,9 @@ const translations: Record<Lang, Record<string, string>> = {
     'settings.phone': 'Téléphone',
     'settings.save': 'Enregistrer',
     'settings.saved': 'Paramètres enregistrés avec succès.',
+    'settings.language': 'Langue',
+    'settings.logoUrl': 'Logo (URL)',
+    'settings.logoPh': 'https://...',
 
     // Categories
     'cat.technology': 'Technologie',
@@ -220,6 +369,7 @@ const translations: Record<Lang, Record<string, string>> = {
     'erole.manager': 'Manager',
     'erole.employee': 'Employé',
     'erole.accountant': 'Comptable',
+    'erole.owner': 'Propriétaire',
 
     // Dashboard
     'dash.totalRevenue': 'Revenu Total',
@@ -228,6 +378,8 @@ const translations: Record<Lang, Record<string, string>> = {
     'dash.activeClients': 'Clients actifs',
     'dash.revenueOverview': 'Aperçu des Revenus',
     'dash.recentInvoices': 'Factures Récentes',
+    'dash.retention': 'Rétention',
+    'dash.netProfit': 'Bénéfice net',
 
     // Common
     'common.save': 'Enregistrer',
@@ -241,6 +393,67 @@ const translations: Record<Lang, Record<string, string>> = {
     'common.name': 'Nom',
     'common.search': 'Rechercher...',
     'common.noData': 'Aucune donnée',
+    'common.refresh': 'Actualiser',
+
+    'lang.switcher.title': 'Changer de langue',
+    'lang.switcher.search': 'Rechercher une langue...',
+    'lang.switcher.empty': 'Aucune langue trouvée.',
+
+    'auth.registerViaBusiness': 'Créez un compte via « Inscription entreprise » sur l’écran d’accueil.',
+    'conn.backendAlert':
+      'Démarrez le backend NestJS (npm run start:dev dans backend). En local, SQLite est possible via backend/.env (voir .env.example).',
+
+    'page.invoices.title': 'Factures',
+    'page.invoices.desc': 'Gérez vos factures et suivez les paiements.',
+    'page.expenses.title': 'Dépenses',
+    'page.expenses.desc': 'Suivez et catégorisez toutes vos dépenses.',
+    'page.clients.title': 'Portefeuille clients',
+    'page.clients.desc': 'Gérez vos relations client.',
+    'page.analytics.title': 'Analytiques',
+    'page.analytics.desc': 'Performance et tendances financières.',
+    'page.audit.title': "Journal d'audit",
+    'page.audit.desc': 'Historique des actions et modifications.',
+    'page.audit.by': 'Par',
+    'page.settings.companyDesc': 'Configurez les informations de votre entreprise.',
+    'page.settings.profileDesc': 'Paramètres de votre profil.',
+    'page.dashboard.title': 'Tableau de bord',
+    'page.dashboard.overview': 'Vue d’ensemble pour',
+    'page.dashboard.companyFallback': 'votre entreprise',
+    'page.clientPortal.title': 'Mon Portail',
+    'page.clientPortal.welcome': 'Bienvenue',
+    'page.clientInvoices.title': 'Mes Factures',
+    'page.clientInvoices.desc': 'Consultez et réglez vos factures.',
+    'page.client.balanceDue': 'Solde dû',
+    'page.client.inProgress': 'En cours',
+    'page.client.projectStep': 'Progression projet',
+    'page.client.phase': 'Phase 4/5',
+    'page.client.paidTotal': 'Total réglé',
+    'page.client.cumulative': 'Cumulé',
+    'page.client.lastInvoices': 'Dernières factures',
+    'page.client.projectProgressTitle': 'Avancement du projet',
+    'page.clientInv.document': 'Document',
+    'page.clientInv.amount': 'Montant',
+    'page.clientInv.action': 'Action',
+    'page.clientInv.due': 'Échéance',
+    'page.clientInv.paid': 'Réglée',
+    'page.clientInv.pay': 'Payer',
+    'page.support.title': 'Support direct',
+    'page.support.subtitle': 'Nos ingénieurs sont prêts à vous assister. Temps de réponse moyen : 4 min.',
+    'page.support.ticket': 'Ouvrir un ticket',
+    'page.support.docs': 'Documentation',
+    'page.support.online': 'Tous les systèmes en ligne',
+    'settings.saveChanges': 'Enregistrer les modifications',
+    'settings.saveSuccess': 'Modifications enregistrées avec succès.',
+    'settings.noCompanyLinked': 'Aucune entreprise liée : connectez-vous avec un compte entreprise ou sélectionnez une société.',
+    'page.projects.title': 'Projets actifs',
+    'page.projects.desc': "Suivez l'avancement de vos projets.",
+    'page.joinCompany.title': 'Rejoindre une entreprise',
+    'page.joinCompany.desc': "Choisissez une entreprise, précisez votre rôle exact et envoyez une demande d'affectation.",
+    'page.joinCompany.refresh': 'Actualiser',
+
+    'notif.title': 'Notifications',
+    'notif.markAllRead': 'Tout marquer lu',
+    'notif.empty': 'Aucune notification.',
   },
 
   en: {
@@ -355,6 +568,8 @@ const translations: Record<Lang, Record<string, string>> = {
     'conn.retry': 'Retry',
     'conn.demoMode': 'Demo Mode',
     'conn.demoNote': 'Demo mode uses fictitious data only.',
+    'conn.dbHint':
+      'If the backend fails to start (MySQL error): start MySQL, or set DB_TYPE=sqlite and DB_SQLITE_PATH=./data/finops.db in backend/.env (see .env.example).',
 
     // Loading
     'loading.connecting': 'Connecting to server...',
@@ -367,6 +582,7 @@ const translations: Record<Lang, Record<string, string>> = {
     'nav.analytics': 'Analytics',
     'nav.audit': 'Audit Log',
     'nav.employees': 'Employees',
+    'nav.joinCompany': 'Join company',
     'nav.settings': 'Settings',
     'nav.logout': 'Sign Out',
     'nav.requests': 'Registration Requests',
@@ -374,6 +590,7 @@ const translations: Record<Lang, Record<string, string>> = {
     'nav.myInvoices': 'My Invoices',
     'nav.projects': 'Projects',
     'nav.support': 'Support',
+    'nav.newCompany': '+ Company',
 
     // Admin - Registration requests
     'admin.requests.title': 'Registration Requests',
@@ -408,6 +625,134 @@ const translations: Record<Lang, Record<string, string>> = {
     'admin.requests.company': 'Company',
     'admin.requests.owner': 'Owner',
     'admin.requests.date': 'Date',
+    'admin.requests.emptyPendingDesc': 'There are no requests pending validation.',
+    'admin.requests.emptyAllDesc': 'No registration requests have been submitted yet.',
+    'admin.requests.deleteConfirm': 'Permanently delete this request? If it was accepted, the company and its users will also be removed.',
+    'admin.requests.delete': 'Delete',
+    'admin.requests.deleteSuccess': 'Deleted successfully: company removed. Users removed: {n}.',
+
+    'admin.employeeReq.title': 'Employee account requests',
+    'admin.employeeReq.desc': 'Approve or reject employees who want to join a company.',
+    'admin.employeeReq.acceptedBanner': 'Employee request accepted',
+    'admin.employeeReq.rejectedBanner': 'Employee request rejected',
+    'admin.employeeReq.emailSentShort': 'An email with credentials has been sent.',
+    'admin.employeeReq.emailNotSentShort': 'Email not sent (SMTP not configured). Share credentials manually.',
+    'admin.employeeReq.emptyTitle': 'No employee requests',
+    'admin.employeeReq.emptyPending': 'There are no pending employee requests.',
+    'admin.employeeReq.emptyAll': 'No employee requests have been submitted yet.',
+
+    'join.manager.title': 'Company attachment requests',
+    'join.manager.rejectPh': 'Rejection reason (min. 10 characters)...',
+    'join.manager.emptyTitle': 'No pending requests',
+    'join.manager.emptyDesc': 'Employee attachment requests will appear here.',
+    'join.manager.requestedRole': 'Requested role:',
+
+    'page.joinCompany.formTitle': 'Form for the selected role',
+    'page.joinCompany.selectCompany': 'Select a company',
+    'page.joinCompany.desiredRole': 'Requested role',
+    'page.joinCompany.profilePlaceholder': 'Briefly describe your profile',
+    'page.joinCompany.sendToOwner': 'Send request to the owner',
+    'page.joinCompany.myRequests': 'My sent requests',
+    'page.joinCompany.emptySentTitle': 'No requests',
+    'page.joinCompany.emptySentDesc': 'You have not sent an attachment request yet.',
+    'page.joinCompany.profileManager': 'Management / team experience',
+    'page.joinCompany.profileAccountant': 'Accounting / tools experience',
+    'page.joinCompany.profileEmployee': 'Main skills for the role',
+    'page.joinCompany.errSelectCompany': 'Please choose a company.',
+    'page.joinCompany.errProfile': 'Please fill in profile details for the selected role.',
+    'page.joinCompany.reasonPrefix': 'Reason:',
+
+    'auth.tabCreate': 'Create an account',
+    'auth.ownerHint': 'For an owner account, use the business registration form.',
+    'auth.openOwnerForm': 'Open owner registration form',
+    'auth.employeeRequestTitle': 'Employee account request form',
+    'auth.employeeFullName': 'Full name',
+    'auth.proEmail': 'Work email',
+    'auth.companyField': 'Company',
+    'auth.companyNamePh': 'Your company name',
+    'auth.sendRequest': 'Send request',
+    'auth.requestSentSuccess': 'Request sent successfully. An administrator will process it.',
+    'auth.adminOnlyLogin': 'The platform admin account is created by the system. Use “Sign in”.',
+    'auth.backendChecking': 'Checking backend...',
+    'auth.backendOk': 'Backend OK',
+    'auth.backendKo': 'Backend unavailable',
+    'auth.backendTest': 'Test backend',
+    'auth.roleClient': 'Client',
+
+    'smtp.suffix': '(SMTP not configured).',
+
+    'company.promptNewName': 'New company name:',
+    'company.promptCategory': 'Category (technology, retail, services, manufacturing, construction, healthcare, finance, other):',
+
+    'page.invoices.new': 'New invoice',
+    'page.invoices.document': 'Document',
+    'page.invoices.client': 'Client',
+    'page.invoices.amount': 'Amount',
+    'page.invoices.status': 'Status',
+    'page.invoices.defaultClient': 'New client',
+
+    'inv.status.Sent': 'Sent',
+    'inv.status.Paid': 'Paid',
+    'inv.status.Overdue': 'Overdue',
+
+    'dash.export': 'Export',
+    'dash.chartRevenue6m': 'Revenue (6 months)',
+    'dash.chartExpensesCat': 'Expenses by category',
+
+    'page.client.timeline.design': 'Design',
+    'page.client.timeline.infra': 'Infrastructure',
+    'page.client.timeline.audit': 'Compliance audit',
+    'page.client.timeline.done': 'Done',
+    'page.client.timeline.active': 'In progress',
+    'page.client.timeline.upcoming': 'Upcoming',
+
+    'loading.brand': 'FinOps Platform',
+    'conn.apiRunningMsg': 'FinOps API running',
+
+    'ai.insight.badge': 'AI intelligence',
+    'ai.insight.title': 'Executive briefing',
+    'ai.insight.loading': 'Analyzing...',
+    'ai.insight.unavailable': 'AI insight is temporarily unavailable. Please retry shortly.',
+
+    'ai.forecast.title': 'AI financial forecast',
+    'ai.forecast.nextMonth': 'Next month',
+    'ai.forecast.next3m': 'Next 3 months',
+    'ai.forecast.trend': 'Trend',
+    'ai.forecast.unavailable': 'Forecast unavailable right now.',
+    'ai.forecast.trend.increasing': 'Increasing',
+    'ai.forecast.trend.stable': 'Stable',
+    'ai.forecast.trend.decreasing': 'Decreasing',
+
+    'ai.cost.title': 'AI cost optimization',
+    'ai.cost.savingsPrefix': 'Estimated monthly savings:',
+    'ai.cost.unavailable': 'Optimization data unavailable.',
+
+    'ai.report.title': 'AI monthly report',
+    'ai.report.totalExpenses': 'Total expenses:',
+    'ai.report.unavailable': 'Monthly report unavailable.',
+
+    'ai.chat.title': 'AI FinOps assistant',
+    'ai.chat.placeholder': 'Ask anything...',
+    'ai.chat.ask': 'Ask',
+    'ai.chat.ready': 'Assistant ready.',
+    'ai.chat.unavailable': 'Assistant unavailable right now. Please retry.',
+    'ai.chat.openTitle': 'Open AI assistant',
+
+    'reg.val.companyMin': 'Company name must be at least 2 characters.',
+    'reg.val.companyMax': 'Company name must not exceed 100 characters.',
+    'reg.val.category': 'Please select a category.',
+    'reg.val.emailRequired': 'Email is required.',
+    'reg.val.emailInvalid': 'Please enter a valid email (e.g. name@company.com).',
+    'reg.val.ownerMin': 'Owner name must be at least 2 characters.',
+    'reg.val.ownerChars': 'Name may only contain letters, spaces, hyphens or apostrophes.',
+    'reg.val.phoneInvalid': 'Invalid phone number (e.g. +216 XX XXX XXX).',
+
+    'page.analytics.revenueVsExpenses': 'Revenue vs Expenses',
+    'page.analytics.cashEfficiency': 'Cash efficiency',
+    'page.analytics.vsPrevQuarter': '+12% vs previous quarter',
+    'page.analytics.autoForecast': 'Automated forecast',
+    'page.analytics.autoForecastBody':
+      'Q3 projections show a 14% surplus based on retention metrics.',
 
     // Employees
     'emp.title': 'Employee Management',
@@ -423,6 +768,20 @@ const translations: Record<Lang, Record<string, string>> = {
     'emp.created': 'Employee created successfully',
     'emp.emailSent': 'An invitation email has been sent to the employee.',
     'emp.emailNotSent': '⚠ Email could not be sent. Share credentials manually.',
+    'emp.newEmployee': 'New employee',
+    'emp.fullName': 'Full name',
+    'emp.fullNamePh': 'Jane Doe',
+    'emp.emailPh': 'jane@company.com',
+    'emp.createInvite': 'Create and send invitation',
+    'emp.addFirst': 'Add first employee',
+    'emp.colEmployee': 'Employee',
+    'emp.loginCredentials': 'Login credentials',
+    'emp.copyIds': 'Copy credentials',
+    'emp.copied': 'Copied!',
+    'emp.close': 'Close',
+    'emp.viewInviteEmail': 'View invitation email (Ethereal)',
+    'emp.mustChangePwd': 'The employee must change their password on first login.',
+    'emp.createdBanner': 'Employee created',
 
     // Settings
     'settings.title': 'Settings',
@@ -435,6 +794,9 @@ const translations: Record<Lang, Record<string, string>> = {
     'settings.phone': 'Phone',
     'settings.save': 'Save',
     'settings.saved': 'Settings saved successfully.',
+    'settings.language': 'Language',
+    'settings.logoUrl': 'Logo (URL)',
+    'settings.logoPh': 'https://...',
 
     // Categories
     'cat.technology': 'Technology',
@@ -450,6 +812,7 @@ const translations: Record<Lang, Record<string, string>> = {
     'erole.manager': 'Manager',
     'erole.employee': 'Employee',
     'erole.accountant': 'Accountant',
+    'erole.owner': 'Owner',
 
     // Dashboard
     'dash.totalRevenue': 'Total Revenue',
@@ -458,6 +821,8 @@ const translations: Record<Lang, Record<string, string>> = {
     'dash.activeClients': 'Active Clients',
     'dash.revenueOverview': 'Revenue Overview',
     'dash.recentInvoices': 'Recent Invoices',
+    'dash.retention': 'Retention',
+    'dash.netProfit': 'Net profit',
 
     // Common
     'common.save': 'Save',
@@ -471,6 +836,67 @@ const translations: Record<Lang, Record<string, string>> = {
     'common.name': 'Name',
     'common.search': 'Search...',
     'common.noData': 'No data',
+    'common.refresh': 'Refresh',
+
+    'lang.switcher.title': 'Change language',
+    'lang.switcher.search': 'Search languages...',
+    'lang.switcher.empty': 'No language found.',
+
+    'auth.registerViaBusiness': 'Create an account via “Business registration” on the home screen.',
+    'conn.backendAlert':
+      'Start the NestJS backend (npm run start:dev in backend). For local dev you can use SQLite via backend/.env (see .env.example).',
+
+    'page.invoices.title': 'Invoices',
+    'page.invoices.desc': 'Manage invoices and track payments.',
+    'page.expenses.title': 'Expenses',
+    'page.expenses.desc': 'Track and categorize all your expenses.',
+    'page.clients.title': 'Client portfolio',
+    'page.clients.desc': 'Manage your client relationships.',
+    'page.analytics.title': 'Analytics',
+    'page.analytics.desc': 'Performance and financial trends.',
+    'page.audit.title': 'Audit log',
+    'page.audit.desc': 'History of actions and changes.',
+    'page.audit.by': 'By',
+    'page.settings.companyDesc': 'Configure your company information.',
+    'page.settings.profileDesc': 'Your profile settings.',
+    'page.dashboard.title': 'Dashboard',
+    'page.dashboard.overview': 'Overview for',
+    'page.dashboard.companyFallback': 'your company',
+    'page.clientPortal.title': 'My portal',
+    'page.clientPortal.welcome': 'Welcome',
+    'page.clientInvoices.title': 'My invoices',
+    'page.clientInvoices.desc': 'View and pay your invoices.',
+    'page.client.balanceDue': 'Amount due',
+    'page.client.inProgress': 'In progress',
+    'page.client.projectStep': 'Project progress',
+    'page.client.phase': 'Phase 4/5',
+    'page.client.paidTotal': 'Total paid',
+    'page.client.cumulative': 'Cumulative',
+    'page.client.lastInvoices': 'Recent invoices',
+    'page.client.projectProgressTitle': 'Project progress',
+    'page.clientInv.document': 'Document',
+    'page.clientInv.amount': 'Amount',
+    'page.clientInv.action': 'Action',
+    'page.clientInv.due': 'Due',
+    'page.clientInv.paid': 'Paid',
+    'page.clientInv.pay': 'Pay',
+    'page.support.title': 'Direct support',
+    'page.support.subtitle': 'Our engineers are ready to help. Average response time: 4 min.',
+    'page.support.ticket': 'Open a ticket',
+    'page.support.docs': 'Documentation',
+    'page.support.online': 'All systems online',
+    'settings.saveChanges': 'Save changes',
+    'settings.saveSuccess': 'Changes saved successfully.',
+    'settings.noCompanyLinked': 'No company linked: sign in with a business account or select a company.',
+    'page.projects.title': 'Active projects',
+    'page.projects.desc': 'Track your project progress.',
+    'page.joinCompany.title': 'Join a company',
+    'page.joinCompany.desc': 'Pick a company, specify your role, and send a join request.',
+    'page.joinCompany.refresh': 'Refresh',
+
+    'notif.title': 'Notifications',
+    'notif.markAllRead': 'Mark all read',
+    'notif.empty': 'No notifications.',
   },
 
   ar: {
@@ -585,6 +1011,8 @@ const translations: Record<Lang, Record<string, string>> = {
     'conn.retry': 'إعادة المحاولة',
     'conn.demoMode': 'الوضع التجريبي',
     'conn.demoNote': 'الوضع التجريبي يستخدم بيانات وهمية فقط.',
+    'conn.dbHint':
+      'إذا فشل تشغيل الخادم (خطأ MySQL): شغّل MySQL، أو اضبط DB_TYPE=sqlite و DB_SQLITE_PATH=./data/finops.db في backend/.env (راجع .env.example).',
 
     // Loading
     'loading.connecting': 'جاري الاتصال بالخادم...',
@@ -597,6 +1025,7 @@ const translations: Record<Lang, Record<string, string>> = {
     'nav.analytics': 'التحليلات',
     'nav.audit': 'سجل التدقيق',
     'nav.employees': 'الموظفين',
+    'nav.joinCompany': 'الانضمام للشركة',
     'nav.settings': 'الإعدادات',
     'nav.logout': 'تسجيل الخروج',
     'nav.requests': 'طلبات التسجيل',
@@ -604,6 +1033,7 @@ const translations: Record<Lang, Record<string, string>> = {
     'nav.myInvoices': 'فواتيري',
     'nav.projects': 'المشاريع',
     'nav.support': 'الدعم',
+    'nav.newCompany': '+ شركة',
 
     // Admin - Registration requests
     'admin.requests.title': 'طلبات التسجيل',
@@ -638,6 +1068,134 @@ const translations: Record<Lang, Record<string, string>> = {
     'admin.requests.company': 'الشركة',
     'admin.requests.owner': 'المالك',
     'admin.requests.date': 'التاريخ',
+    'admin.requests.emptyPendingDesc': 'لا توجد طلبات في انتظار التحقق.',
+    'admin.requests.emptyAllDesc': 'لم يُرسل أي طلب تسجيل بعد.',
+    'admin.requests.deleteConfirm': 'حذف هذا الطلب نهائياً؟ إذا كان مقبولاً، ستُحذف الشركة ومستخدموها أيضاً.',
+    'admin.requests.delete': 'حذف',
+    'admin.requests.deleteSuccess': 'تم الحذف بنجاح: أُزيلت الشركة. المستخدمون المُزالون: {n}.',
+
+    'admin.employeeReq.title': 'طلبات حسابات الموظفين',
+    'admin.employeeReq.desc': 'اقبل أو ارفض الموظفين الذين يريدون الانضمام إلى شركة.',
+    'admin.employeeReq.acceptedBanner': 'تم قبول طلب الموظف',
+    'admin.employeeReq.rejectedBanner': 'تم رفض طلب الموظف',
+    'admin.employeeReq.emailSentShort': 'تم إرسال بريد يحتوي على بيانات الاعتماد.',
+    'admin.employeeReq.emailNotSentShort': 'لم يُرسل البريد (SMTP غير مُعدّ). شارك بيانات الاعتماد يدوياً.',
+    'admin.employeeReq.emptyTitle': 'لا توجد طلبات موظفين',
+    'admin.employeeReq.emptyPending': 'لا توجد طلبات موظفين قيد الانتظار.',
+    'admin.employeeReq.emptyAll': 'لم يُرسل أي طلب موظف بعد.',
+
+    'join.manager.title': 'طلبات الارتباط بالشركة',
+    'join.manager.rejectPh': 'سبب الرفض (10 أحرف على الأقل)...',
+    'join.manager.emptyTitle': 'لا توجد طلبات قيد الانتظار',
+    'join.manager.emptyDesc': 'ستظهر هنا طلبات ارتباط الموظفين.',
+    'join.manager.requestedRole': 'الدور المطلوب:',
+
+    'page.joinCompany.formTitle': 'النموذج حسب الدور المختار',
+    'page.joinCompany.selectCompany': 'اختر شركة',
+    'page.joinCompany.desiredRole': 'الدور المطلوب',
+    'page.joinCompany.profilePlaceholder': 'صف ملفك باختصار',
+    'page.joinCompany.sendToOwner': 'إرسال الطلب إلى المالك',
+    'page.joinCompany.myRequests': 'طلباتي المرسلة',
+    'page.joinCompany.emptySentTitle': 'لا توجد طلبات',
+    'page.joinCompany.emptySentDesc': 'لم ترسل بعد طلب ارتباط.',
+    'page.joinCompany.profileManager': 'خبرة إدارية / فريق',
+    'page.joinCompany.profileAccountant': 'خبرة محاسبية / أدوات',
+    'page.joinCompany.profileEmployee': 'المهارات الرئيسية للمنصب',
+    'page.joinCompany.errSelectCompany': 'يرجى اختيار شركة.',
+    'page.joinCompany.errProfile': 'يرجى ملء تفاصيل الملف حسب الدور المختار.',
+    'page.joinCompany.reasonPrefix': 'السبب:',
+
+    'auth.tabCreate': 'إنشاء حساب',
+    'auth.ownerHint': 'لحساب المالك، استخدم نموذج تسجيل الشركة.',
+    'auth.openOwnerForm': 'فتح نموذج تسجيل المالك',
+    'auth.employeeRequestTitle': 'نموذج طلب حساب موظف',
+    'auth.employeeFullName': 'الاسم الكامل',
+    'auth.proEmail': 'البريد المهني',
+    'auth.companyField': 'الشركة',
+    'auth.companyNamePh': 'اسم شركتك',
+    'auth.sendRequest': 'إرسال الطلب',
+    'auth.requestSentSuccess': 'تم إرسال الطلب بنجاح. سيتم معالجته من قبل المسؤول.',
+    'auth.adminOnlyLogin': 'يُنشأ حساب مسؤول المنصة تلقائياً. استخدم «تسجيل الدخول».',
+    'auth.backendChecking': 'جاري التحقق من الخادم...',
+    'auth.backendOk': 'الخادم يعمل',
+    'auth.backendKo': 'الخادم غير متاح',
+    'auth.backendTest': 'اختبار الخادم',
+    'auth.roleClient': 'عميل',
+
+    'smtp.suffix': '(SMTP غير مُعدّ).',
+
+    'company.promptNewName': 'اسم الشركة الجديدة:',
+    'company.promptCategory': 'الفئة (technology, retail, services, manufacturing, construction, healthcare, finance, other):',
+
+    'page.invoices.new': 'فاتورة جديدة',
+    'page.invoices.document': 'المستند',
+    'page.invoices.client': 'العميل',
+    'page.invoices.amount': 'المبلغ',
+    'page.invoices.status': 'الحالة',
+    'page.invoices.defaultClient': 'عميل جديد',
+
+    'inv.status.Sent': 'مرسلة',
+    'inv.status.Paid': 'مدفوعة',
+    'inv.status.Overdue': 'متأخرة',
+
+    'dash.export': 'تصدير',
+    'dash.chartRevenue6m': 'الإيرادات (6 أشهر)',
+    'dash.chartExpensesCat': 'المصروفات حسب الفئة',
+
+    'page.client.timeline.design': 'التصميم',
+    'page.client.timeline.infra': 'البنية التحتية',
+    'page.client.timeline.audit': 'تدقيق الامتثال',
+    'page.client.timeline.done': 'مكتمل',
+    'page.client.timeline.active': 'قيد التنفيذ',
+    'page.client.timeline.upcoming': 'قادم',
+
+    'loading.brand': 'منصة FinOps',
+    'conn.apiRunningMsg': 'FinOps API running',
+
+    'ai.insight.badge': 'ذكاء اصطناعي',
+    'ai.insight.title': 'إحاطة تنفيذية',
+    'ai.insight.loading': 'جاري التحليل...',
+    'ai.insight.unavailable': 'تحليل الذكاء الاصطناعي غير متاح مؤقتاً. أعد المحاولة قريباً.',
+
+    'ai.forecast.title': 'توقع مالي بالذكاء الاصطناعي',
+    'ai.forecast.nextMonth': 'الشهر القادم',
+    'ai.forecast.next3m': 'الأشهر الثلاثة القادمة',
+    'ai.forecast.trend': 'الاتجاه',
+    'ai.forecast.unavailable': 'التوقع غير متاح حالياً.',
+    'ai.forecast.trend.increasing': 'تصاعدي',
+    'ai.forecast.trend.stable': 'مستقر',
+    'ai.forecast.trend.decreasing': 'تنازلي',
+
+    'ai.cost.title': 'تحسين التكاليف بالذكاء الاصطناعي',
+    'ai.cost.savingsPrefix': 'التوفير الشهري المقدّر:',
+    'ai.cost.unavailable': 'بيانات التحسين غير متاحة.',
+
+    'ai.report.title': 'تقرير شهري بالذكاء الاصطناعي',
+    'ai.report.totalExpenses': 'إجمالي المصروفات:',
+    'ai.report.unavailable': 'التقرير الشهري غير متاح.',
+
+    'ai.chat.title': 'مساعد FinOps بالذكاء الاصطناعي',
+    'ai.chat.placeholder': 'اطرح سؤالاً...',
+    'ai.chat.ask': 'إرسال',
+    'ai.chat.ready': 'المساعد جاهز.',
+    'ai.chat.unavailable': 'المساعد غير متاح. أعد المحاولة.',
+    'ai.chat.openTitle': 'فتح المساعد الذكي',
+
+    'reg.val.companyMin': 'اسم الشركة يجب أن يكون حرفين على الأقل.',
+    'reg.val.companyMax': 'اسم الشركة لا يتجاوز 100 حرف.',
+    'reg.val.category': 'يرجى اختيار فئة.',
+    'reg.val.emailRequired': 'البريد الإلكتروني مطلوب.',
+    'reg.val.emailInvalid': 'أدخل بريداً صالحاً (مثال: name@company.com).',
+    'reg.val.ownerMin': 'اسم المالك حرفان على الأقل.',
+    'reg.val.ownerChars': 'الاسم يحتوي على أحرف ومسافات وشرطات وعلامات اقتباس فقط.',
+    'reg.val.phoneInvalid': 'رقم هاتف غير صالح (مثال: +216 XX XXX XXX).',
+
+    'page.analytics.revenueVsExpenses': 'الإيرادات مقابل المصروفات',
+    'page.analytics.cashEfficiency': 'كفاءة السيولة',
+    'page.analytics.vsPrevQuarter': '+12% مقارنة بالربع السابق',
+    'page.analytics.autoForecast': 'توقع آلي',
+    'page.analytics.autoForecastBody':
+      'توقعات الربع الثالث تشير إلى فائض 14% بناءً على مؤشرات الاحتفاظ.',
 
     // Employees
     'emp.title': 'إدارة الموظفين',
@@ -653,6 +1211,20 @@ const translations: Record<Lang, Record<string, string>> = {
     'emp.created': 'تم إنشاء الموظف بنجاح',
     'emp.emailSent': 'تم إرسال بريد الدعوة إلى الموظف.',
     'emp.emailNotSent': '⚠ لم يتم إرسال البريد. شارك بيانات الاعتماد يدوياً.',
+    'emp.newEmployee': 'موظف جديد',
+    'emp.fullName': 'الاسم الكامل',
+    'emp.fullNamePh': 'فاطمة أحمد',
+    'emp.emailPh': 'fatima@company.com',
+    'emp.createInvite': 'إنشاء وإرسال الدعوة',
+    'emp.addFirst': 'إضافة أول موظف',
+    'emp.colEmployee': 'الموظف',
+    'emp.loginCredentials': 'بيانات تسجيل الدخول',
+    'emp.copyIds': 'نسخ بيانات الاعتماد',
+    'emp.copied': 'تم النسخ!',
+    'emp.close': 'إغلاق',
+    'emp.viewInviteEmail': 'عرض بريد الدعوة (Ethereal)',
+    'emp.mustChangePwd': 'يجب على الموظف تغيير كلمة المرور عند أول تسجيل دخول.',
+    'emp.createdBanner': 'تم إنشاء الموظف',
 
     // Settings
     'settings.title': 'الإعدادات',
@@ -665,6 +1237,9 @@ const translations: Record<Lang, Record<string, string>> = {
     'settings.phone': 'الهاتف',
     'settings.save': 'حفظ',
     'settings.saved': 'تم حفظ الإعدادات بنجاح.',
+    'settings.language': 'اللغة',
+    'settings.logoUrl': 'الشعار (رابط)',
+    'settings.logoPh': 'https://...',
 
     // Categories
     'cat.technology': 'تكنولوجيا',
@@ -680,6 +1255,7 @@ const translations: Record<Lang, Record<string, string>> = {
     'erole.manager': 'مدير',
     'erole.employee': 'موظف',
     'erole.accountant': 'محاسب',
+    'erole.owner': 'المالك',
 
     // Dashboard
     'dash.totalRevenue': 'إجمالي الإيرادات',
@@ -688,6 +1264,8 @@ const translations: Record<Lang, Record<string, string>> = {
     'dash.activeClients': 'العملاء النشطين',
     'dash.revenueOverview': 'نظرة عامة على الإيرادات',
     'dash.recentInvoices': 'الفواتير الأخيرة',
+    'dash.retention': 'الاحتفاظ',
+    'dash.netProfit': 'صافي الربح',
 
     // Common
     'common.save': 'حفظ',
@@ -701,6 +1279,67 @@ const translations: Record<Lang, Record<string, string>> = {
     'common.name': 'الاسم',
     'common.search': 'بحث...',
     'common.noData': 'لا توجد بيانات',
+    'common.refresh': 'تحديث',
+
+    'lang.switcher.title': 'تغيير اللغة',
+    'lang.switcher.search': 'ابحث عن لغة...',
+    'lang.switcher.empty': 'لم يتم العثور على لغة.',
+
+    'auth.registerViaBusiness': 'أنشئ حساباً عبر « تسجيل الشركة » في الشاشة الرئيسية.',
+    'conn.backendAlert':
+      'شغّل خادم NestJS (npm run start:dev في مجلد backend). للتطوير محلياً يمكن استخدام SQLite عبر backend/.env (راجع .env.example).',
+
+    'page.invoices.title': 'الفواتير',
+    'page.invoices.desc': 'إدارة الفواتير ومتابعة المدفوعات.',
+    'page.expenses.title': 'المصروفات',
+    'page.expenses.desc': 'تتبع وتصنيف جميع مصروفاتك.',
+    'page.clients.title': 'محفظة العملاء',
+    'page.clients.desc': 'إدارة علاقات عملائك.',
+    'page.analytics.title': 'التحليلات',
+    'page.analytics.desc': 'الأداء والاتجاهات المالية.',
+    'page.audit.title': 'سجل التدقيق',
+    'page.audit.desc': 'سجل الإجراءات والتغييرات.',
+    'page.audit.by': 'بواسطة',
+    'page.settings.companyDesc': 'اضبط معلومات شركتك.',
+    'page.settings.profileDesc': 'إعدادات ملفك الشخصي.',
+    'page.dashboard.title': 'لوحة التحكم',
+    'page.dashboard.overview': 'نظرة عامة لـ',
+    'page.dashboard.companyFallback': 'شركتك',
+    'page.clientPortal.title': 'بوابتي',
+    'page.clientPortal.welcome': 'مرحباً',
+    'page.clientInvoices.title': 'فواتيري',
+    'page.clientInvoices.desc': 'اعرض فواتيرك وادفعها.',
+    'page.client.balanceDue': 'المبلغ المستحق',
+    'page.client.inProgress': 'قيد التنفيذ',
+    'page.client.projectStep': 'تقدم المشروع',
+    'page.client.phase': 'المرحلة 4/5',
+    'page.client.paidTotal': 'إجمالي المدفوع',
+    'page.client.cumulative': 'تراكمي',
+    'page.client.lastInvoices': 'أحدث الفواتير',
+    'page.client.projectProgressTitle': 'تقدم المشروع',
+    'page.clientInv.document': 'المستند',
+    'page.clientInv.amount': 'المبلغ',
+    'page.clientInv.action': 'إجراء',
+    'page.clientInv.due': 'الاستحقاق',
+    'page.clientInv.paid': 'مدفوعة',
+    'page.clientInv.pay': 'دفع',
+    'page.support.title': 'دعم مباشر',
+    'page.support.subtitle': 'مهندسونا جاهزون للمساعدة. متوسط وقت الاستجابة: 4 د.',
+    'page.support.ticket': 'فتح تذكرة',
+    'page.support.docs': 'التوثيق',
+    'page.support.online': 'جميع الأنظمة متصلة',
+    'settings.saveChanges': 'حفظ التغييرات',
+    'settings.saveSuccess': 'تم حفظ التعديلات بنجاح.',
+    'settings.noCompanyLinked': 'لا توجد شركة مرتبطة: سجّل الدخول بحساب شركة أو اختر شركة.',
+    'page.projects.title': 'المشاريع النشطة',
+    'page.projects.desc': 'تابع تقدم مشاريعك.',
+    'page.joinCompany.title': 'الانضمام إلى شركة',
+    'page.joinCompany.desc': 'اختر شركة، حدد دورك، وأرسل طلب انضمام.',
+    'page.joinCompany.refresh': 'تحديث',
+
+    'notif.title': 'الإشعارات',
+    'notif.markAllRead': 'تعليم الكل كمقروء',
+    'notif.empty': 'لا توجد إشعارات.',
   },
 };
 
@@ -708,6 +1347,18 @@ const runtimeTranslations: Record<string, Record<string, string>> = {};
 
 export function isStaticLang(lang: string): lang is Lang {
   return lang === 'fr' || lang === 'en' || lang === 'ar';
+}
+
+/** Maps NLLB UI codes that mirror fr/en/ar to static app languages (settings + persistence). */
+export const DYNAMIC_TO_STATIC_UI_LANG: Record<string, Lang> = {
+  eng_Latn: 'en',
+  fra_Latn: 'fr',
+  arb_Arab: 'ar',
+};
+
+export function resolveStaticUiLang(lang: UiLang): Lang {
+  if (isStaticLang(lang)) return lang;
+  return DYNAMIC_TO_STATIC_UI_LANG[lang] ?? 'fr';
 }
 
 export function getBaseTranslations(lang: Lang = 'en'): Record<string, string> {
@@ -724,9 +1375,11 @@ export function getRuntimeTranslations(lang: string): Record<string, string> | u
 
 export function t(key: string, lang: UiLang): string {
   if (isStaticLang(lang)) {
-    return translations[lang]?.[key] ?? translations.fr?.[key] ?? key;
+    return translations[lang]?.[key] ?? translations.en?.[key] ?? translations.fr?.[key] ?? key;
   }
-  return runtimeTranslations[lang]?.[key] ?? translations.en?.[key] ?? translations.fr?.[key] ?? key;
+  return (
+    runtimeTranslations[lang]?.[key] ?? translations.en?.[key] ?? translations.fr?.[key] ?? key
+  );
 }
 
 export function getLangDir(lang: UiLang): 'ltr' | 'rtl' {

@@ -17,6 +17,8 @@ export class ActivityLogsController {
   @Get()
   @Roles(UserRole.PLATFORM_ADMIN, UserRole.OWNER, UserRole.MANAGER)
   list(@CurrentUser() user: User) {
-    return this.service.findByCompany(user.activeCompanyId || user.companyId!);
+    const companyId = user.activeCompanyId || user.companyId;
+    if (!companyId) return [];
+    return this.service.findByCompany(companyId);
   }
 }

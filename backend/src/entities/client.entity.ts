@@ -27,6 +27,9 @@ export class Client {
   @Column({ nullable: true })
   phone?: string;
 
+  @Column({ name: 'company_name', nullable: true })
+  companyName?: string;
+
   @CreateDateColumn({ name: 'created_at' })
   createdAt: Date;
 

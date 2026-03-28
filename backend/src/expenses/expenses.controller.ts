@@ -16,13 +16,13 @@ export class ExpensesController {
   constructor(private readonly service: ExpensesService) {}
 
   @Get()
-  @Roles(UserRole.OWNER, UserRole.MANAGER, UserRole.ACCOUNTANT)
+  @Roles(UserRole.OWNER, UserRole.MANAGER, UserRole.ACCOUNTANT, UserRole.EMPLOYEE)
   findAll(@CurrentUser() user: User) {
     return this.service.findAll(user.activeCompanyId || user.companyId!);
   }
 
   @Post()
-  @Roles(UserRole.OWNER, UserRole.MANAGER, UserRole.ACCOUNTANT)
+  @Roles(UserRole.OWNER, UserRole.MANAGER, UserRole.ACCOUNTANT, UserRole.EMPLOYEE)
   create(@CurrentUser() user: User, @Body() dto: CreateExpenseDto) {
     return this.service.create(user.activeCompanyId || user.companyId!, user.id, dto);
   }

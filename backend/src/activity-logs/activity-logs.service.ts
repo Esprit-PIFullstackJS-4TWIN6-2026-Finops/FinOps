@@ -17,6 +17,7 @@ export class ActivityLogsService {
   findByCompany(companyId: string) {
     return this.repo.find({
       where: { companyId },
+      relations: ['actor'],
       order: { createdAt: 'DESC' },
       take: 100,
     });

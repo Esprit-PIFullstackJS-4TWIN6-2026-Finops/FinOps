@@ -2,6 +2,8 @@
  * Client API pour le backend NestJS FinOps
  */
 
+import type { AuditLog, Client, Invoice } from './types';
+
 const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:3000';
 
 function getToken(): string | null {
@@ -212,6 +214,34 @@ export interface ExpenseBackend {
   notes?: string;
   createdBy: string;
   createdAt: string;
+}
+
+export interface InvoiceBackend {
+  id: string;
+  number: string;
+  clientName: string;
+  clientEmail?: string;
+  date: string;
+  dueDate: string;
+  total: number | string;
+  status: string;
+}
+
+export interface ClientRowBackend {
+  id: string;
+  name: string;
+  email?: string;
+  phone?: string;
+  companyName?: string;
+}
+
+export interface ActivityLogRowBackend {
+  id: number;
+  action: string;
+  entityType: string;
+  entityId: string;
+  createdAt: string;
+  actor?: { name: string; email?: string };
 }
 
 export interface NotificationBackend {
@@ -567,4 +597,83 @@ export const BackendAPI = {
       body: JSON.stringify(payload),
     });
   },
+
+  async getInvoices() {
+    return fetchApi<InvoiceBackend[]>('/invoices');
+  },
+
+  async createInvoice(data: {
+    number: string;
+    clientName: string;
+    clientEmail?: string;
+    date: string;
+    dueDate: string;
+    total: number;
+    status?: 'Draft' | 'Sent' | 'Paid' | 'Overdue';
+  }) {
+    return fetchApi<InvoiceBackend>('/invoices', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  },
+
+  async payInvoice(id: string) {
+    return fetchApi<InvoiceBackend>(`/invoices/${id}/pay`, {
+      method: 'PATCH',
+    });
+  },
+
+  async getClients() {
+    return fetchApi<ClientRowBackend[]>('/clients');
+  },
+
+  async createClient(data: {
+    name: string;
+    email?: string;
+    phone?: string;
+    companyName?: string;
+  }) {
+    return fetchApi<ClientRowBackend>('/clients', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  },
+
+  async getActivityLogs() {
+    return fetchApi<ActivityLogRowBackend[]>('/activity-logs');
+  },
 };
+
+export function invoiceFromBackend(row: InvoiceBackend): Invoice {
+  const d = typeof row.date === 'string' ? row.date : String(row.date);
+  const due = typeof row.dueDate === 'string' ? row.dueDate : String(row.dueDate);
+  return {
+    id: row.id,
+    number: row.number,
+    clientName: row.clientName,
+    date: d.slice(0, 10),
+    dueDate: due.slice(0, 10),
+    total: Number(row.total),
+    status: row.status as Invoice['status'],
+  };
+}
+
+export function clientFromBackend(row: ClientRowBackend): Client {
+  return {
+    id: row.id,
+    name: row.name,
+    email: row.email || '',
+    phone: row.phone || '',
+    company: row.companyName || '',
+  };
+}
+
+export function auditFromBackend(row: ActivityLogRowBackend): AuditLog {
+  return {
+    id: String(row.id),
+    action: row.action,
+    user: row.actor?.name || row.actor?.email || 'Système',
+    timestamp: row.createdAt,
+    entity: row.entityType,
+  };
+}
