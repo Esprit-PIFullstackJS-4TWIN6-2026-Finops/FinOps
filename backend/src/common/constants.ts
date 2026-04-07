@@ -1,5 +1,5 @@
 // Sécurité - blocage après tentatives échouées
-export const LOGIN_MAX_ATTEMPTS = 5;
+export const LOGIN_MAX_ATTEMPTS = 6;
 export const LOGIN_LOCKOUT_SECONDS = 30;
 
 // Règles du mot de passe

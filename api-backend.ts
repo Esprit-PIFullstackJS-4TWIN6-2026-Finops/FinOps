@@ -130,8 +130,13 @@ export interface UserBackend {
   emailVerifiedAt?: string;
   pendingEmail?: string;
   lastLoginAt?: string;
+  locked?: boolean;
+  lockReason?: 'manual' | 'failed_attempts';
   lockedUntil?: string;
   preferences?: UserPreferences;
+  twoFactorEnabled?: boolean;
+  twoFactorEnrolledAt?: string;
+  twoFactorLastVerifiedAt?: string;
   createdAt?: string;
   updatedAt?: string;
   company?: {
@@ -154,6 +159,7 @@ export interface UserListItemBackend {
   avatarUrl?: string;
   emailVerified: boolean;
   locked: boolean;
+  lockReason?: 'manual' | 'failed_attempts';
   lockedUntil?: string;
   mustChangePassword: boolean;
   lastLoginAt?: string;
@@ -373,18 +379,62 @@ export interface CompanyJoinRequestBackend {
   requesterUser?: UserBackend;
 }
 
+export interface TwoFactorLoginChallengeBackend {
+  userId: string;
+  email: string;
+  name: string;
+  method: 'totp';
+  expiresAt: string;
+}
+
+export interface TwoFactorSetupBackend {
+  qrCodeDataUrl: string;
+  manualEntryKey: string;
+  otpauthUrl: string;
+  issuer: string;
+  accountLabel: string;
+  expiresAt: string;
+}
+
+export type LoginResponseBackend =
+  | {
+      requiresTwoFactor: false;
+      user: UserBackend;
+      token: string;
+      mustChangePassword: boolean;
+    }
+  | {
+      requiresTwoFactor: true;
+      twoFactor: TwoFactorLoginChallengeBackend;
+    };
+
 export const BackendAPI = {
   isConfigured: () => true,
 
   // Auth
   async login(email: string, password: string) {
+    const data = await fetchApi<LoginResponseBackend>('/auth/login', {
+      method: 'POST',
+      body: JSON.stringify({ email, password }),
+    });
+    if (!data.requiresTwoFactor) {
+      setToken(data.token);
+    }
+    return data;
+  },
+
+  async verifyTwoFactorLogin(
+    userId: string,
+    code: string
+  ) {
     const data = await fetchApi<{
+      requiresTwoFactor: false;
       user: UserBackend;
       token: string;
       mustChangePassword: boolean;
-    }>('/auth/login', {
+    }>('/auth/2fa/login/verify', {
       method: 'POST',
-      body: JSON.stringify({ email, password }),
+      body: JSON.stringify({ userId, code }),
     });
     setToken(data.token);
     return data;
@@ -414,6 +464,28 @@ export const BackendAPI = {
     }>('/auth/forgot-password', {
       method: 'POST',
       body: JSON.stringify({ email }),
+    });
+  },
+
+  async beginTwoFactorSetup() {
+    return fetchApi<TwoFactorSetupBackend>('/auth/2fa/setup', {
+      method: 'POST',
+    });
+  },
+
+  async completeTwoFactorSetup(code: string) {
+    return fetchApi<{ message: string; user: UserBackend }>(
+      '/auth/2fa/setup/verify',
+      {
+        method: 'POST',
+        body: JSON.stringify({ code }),
+      }
+    );
+  },
+
+  async disableTwoFactor() {
+    return fetchApi<{ message: string; user: UserBackend }>('/auth/2fa/disable', {
+      method: 'POST',
     });
   },
 
@@ -882,12 +954,246 @@ export function clientFromBackend(row: ClientRowBackend): Client {
   };
 }
 
+function parseActivityAction(action: string) {
+  const trimmed = (action || '').trim();
+  const splitIndex = trimmed.indexOf(' ');
+  if (splitIndex === -1) {
+    return { method: '', path: trimmed };
+  }
+  return {
+    method: trimmed.slice(0, splitIndex).toUpperCase(),
+    path: trimmed.slice(splitIndex + 1).trim(),
+  };
+}
+
+function isOpaqueActivityId(value: string | undefined) {
+  if (!value) return false;
+  return (
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value) ||
+    /^\d+$/.test(value) ||
+    /^[A-Za-z0-9_-]{16,}$/.test(value)
+  );
+}
+
+function formatActivityTargetLabel(value: string | undefined) {
+  if (!value) return 'activity';
+  if (isOpaqueActivityId(value)) return 'record';
+  return value.replace(/[-_]/g, ' ').trim().toLowerCase();
+}
+
+function defaultActivitySentence(method: string, target: string) {
+  switch (method) {
+    case 'GET':
+      return `Viewed ${target}.`;
+    case 'POST':
+      return `Created ${target}.`;
+    case 'PUT':
+    case 'PATCH':
+      return `Updated ${target}.`;
+    case 'DELETE':
+      return `Deleted ${target}.`;
+    default:
+      return `Updated ${target}.`;
+  }
+}
+
+export function formatActivityContext(entityType: string, entityId: string) {
+  switch (entityType) {
+    case 'users':
+      if (entityId === 'activity') return 'Activity history';
+      return 'User account';
+    case 'companies':
+      if (entityId === 'discover') return 'Company discovery';
+      if (entityId === 'my-companies') return 'Company memberships';
+      if (entityId === 'join-requests') return 'Join requests';
+      return 'Company';
+    case 'notifications':
+      if (entityId === 'unread-count') return 'Unread notifications';
+      return 'Notifications';
+    case 'clients':
+      return 'Clients';
+    case 'expenses':
+      return 'Expenses';
+    case 'invoices':
+      return 'Invoices';
+    case 'transactions':
+      return 'Transactions';
+    case 'activity-logs':
+      return 'Activity logs';
+    case 'auth':
+      return 'Account security';
+    case 'subscriptions':
+      return 'Subscription';
+    case 'tenants':
+      return 'Workspace';
+    case 'ai':
+      return 'AI tools';
+    case 'admin':
+      if (entityId === 'registration-requests') return 'Registration requests';
+      if (entityId === 'employee-access-requests') return 'Access requests';
+      return 'Administration';
+    default:
+      return formatActivityTargetLabel(entityType).replace(/\b\w/g, (char) => char.toUpperCase());
+  }
+}
+
+export function formatActivitySentence(
+  action: string,
+  entityType: string,
+  entityId: string
+) {
+  const { method, path } = parseActivityAction(action);
+  const segments = path.split('/').filter(Boolean);
+  const [resource, first, second, third, fourth] = segments;
+
+  switch (resource) {
+    case 'users':
+      if (first === 'me') {
+        if (!second) return method === 'PATCH' ? 'Updated profile details.' : 'Viewed profile details.';
+        if (second === 'preferences') {
+          return method === 'PATCH' ? 'Updated personal preferences.' : 'Viewed personal preferences.';
+        }
+        if (second === 'avatar') return 'Updated the profile picture.';
+        if (second === 'activity') return 'Viewed personal activity history.';
+        if (second === 'email-verification' && third === 'request') {
+          return 'Requested email verification.';
+        }
+        if (second === 'email-verification' && third === 'confirm') {
+          return 'Confirmed email verification.';
+        }
+      }
+      if (second === 'activity') return 'Viewed this user\'s activity history.';
+      if (second === 'lock') return 'Locked this user account.';
+      if (second === 'unlock') return 'Unlocked this user account.';
+      if (!first) return 'Viewed the user directory.';
+      return defaultActivitySentence(method, 'user details');
+
+    case 'companies':
+      if (!first && method === 'POST') return 'Created a company.';
+      if (first === 'discover') return 'Browsed available companies.';
+      if (first === 'my-companies') return 'Viewed company memberships.';
+      if (first === 'join-requests' && second === 'mine') return 'Viewed personal join requests.';
+      if (first === 'join-requests' && !second && method === 'POST') {
+        return 'Submitted a company join request.';
+      }
+      if (second === 'switch') return 'Switched the active company.';
+      if (second === 'employees') {
+        return method === 'POST' ? 'Added a company employee.' : 'Viewed company employees.';
+      }
+      if (second === 'join-requests' && !third) return 'Viewed company join requests.';
+      if (fourth === 'accept') return 'Accepted a company join request.';
+      if (fourth === 'reject') return 'Rejected a company join request.';
+      if (isOpaqueActivityId(first)) {
+        if (method === 'GET') return 'Viewed company details.';
+        if (method === 'PUT' || method === 'PATCH') return 'Updated company details.';
+      }
+      return defaultActivitySentence(method, 'company details');
+
+    case 'notifications':
+      if (first === 'unread-count') return 'Checked unread notifications.';
+      if (first === 'read-all') return 'Marked all notifications as read.';
+      if (second === 'read') return 'Marked a notification as read.';
+      return method === 'GET' ? 'Viewed notifications.' : defaultActivitySentence(method, 'notifications');
+
+    case 'clients':
+      if (method === 'POST') return 'Added a client.';
+      return method === 'GET' ? 'Viewed clients.' : defaultActivitySentence(method, 'client records');
+
+    case 'expenses':
+      if (method === 'POST') return 'Created an expense.';
+      return method === 'GET' ? 'Viewed expenses.' : defaultActivitySentence(method, 'expense records');
+
+    case 'invoices':
+      if (second === 'pay') return 'Marked an invoice as paid.';
+      if (method === 'POST') return 'Created an invoice.';
+      return method === 'GET' ? 'Viewed invoices.' : defaultActivitySentence(method, 'invoice records');
+
+    case 'transactions':
+      if (method === 'POST') return 'Created a transaction.';
+      return method === 'GET' ? 'Viewed transactions.' : defaultActivitySentence(method, 'transaction records');
+
+    case 'auth':
+      if (first === 'change-password') return 'Changed account password.';
+      if (first === 'forgot-password') return 'Requested a password reset.';
+      if (first === '2fa' && second === 'setup' && !third) {
+        return 'Started authenticator app 2FA setup.';
+      }
+      if (first === '2fa' && second === 'setup' && third === 'verify') {
+        return 'Enabled authenticator app 2FA.';
+      }
+      if (first === '2fa' && second === 'disable') {
+        return 'Disabled authenticator app 2FA.';
+      }
+      if (first === '2fa' && second === 'login' && third === 'verify') {
+        return 'Completed authenticator app 2FA sign-in.';
+      }
+      if (first === '2fa' && second === 'register' && third === 'options') {
+        return 'Started two-factor authentication setup.';
+      }
+      if (first === '2fa' && second === 'register' && third === 'verify') {
+        return 'Enabled two-factor authentication.';
+      }
+      return 'Updated account security settings.';
+
+    case 'activity-logs':
+      return 'Viewed activity logs.';
+
+    case 'tenants':
+      if (first === 'switch') return 'Switched the active workspace.';
+      return defaultActivitySentence(method, 'workspace settings');
+
+    case 'subscriptions':
+      return 'Viewed subscription details.';
+
+    case 'ai':
+      if (first === 'insights') return 'Viewed AI insights.';
+      if (first === 'translate') {
+        return second === 'batch' ? 'Translated content in batch.' : 'Translated content.';
+      }
+      if (first === 'languages') return 'Loaded available languages.';
+      if (first === 'analyze-expenses') return 'Analyzed expenses with AI.';
+      if (first === 'forecast') return 'Generated a financial forecast.';
+      if (first === 'chat') return 'Used the AI assistant.';
+      if (first === 'optimize-costs') return 'Generated cost optimization suggestions.';
+      if (first === 'report' && second === 'monthly') return 'Generated a monthly AI report.';
+      return 'Used an AI feature.';
+
+    case 'admin':
+      if (first === 'registration-requests' && !second) return 'Viewed registration requests.';
+      if (first === 'registration-requests' && second === 'pending') {
+        return 'Viewed pending registration requests.';
+      }
+      if (first === 'registration-requests' && third === 'accept') {
+        return 'Accepted a registration request.';
+      }
+      if (first === 'registration-requests' && third === 'reject') {
+        return 'Rejected a registration request.';
+      }
+      if (first === 'registration-requests' && method === 'DELETE') {
+        return 'Deleted a registration request.';
+      }
+      if (first === 'employee-access-requests' && !second) {
+        return 'Viewed employee access requests.';
+      }
+      if (first === 'employee-access-requests' && third === 'accept') {
+        return 'Accepted an employee access request.';
+      }
+      if (first === 'employee-access-requests' && third === 'reject') {
+        return 'Rejected an employee access request.';
+      }
+      return 'Viewed administration activity.';
+
+    default:
+      return defaultActivitySentence(method, formatActivityTargetLabel(entityId || entityType));
+  }
+}
+
 export function auditFromBackend(row: ActivityLogRowBackend): AuditLog {
   return {
     id: String(row.id),
-    action: row.action,
+    action: formatActivitySentence(row.action, row.entityType, row.entityId),
     user: row.actor?.name || row.actor?.email || 'Système',
     timestamp: row.createdAt,
-    entity: row.entityType,
+    entity: formatActivityContext(row.entityType, row.entityId),
   };
 }

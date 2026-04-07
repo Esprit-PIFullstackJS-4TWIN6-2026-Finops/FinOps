@@ -28,6 +28,7 @@ import { ConfirmEmailVerificationDto } from './dto/confirm-email-verification.dt
 import { ActivityHistoryQueryDto } from './dto/activity-history.query.dto';
 import { ExportUsersQueryDto } from './dto/export-users.query.dto';
 import { LockUserDto } from './dto/lock-user.dto';
+import { LOGIN_MAX_ATTEMPTS } from '../common/constants';
 
 type SafeUser = {
   id: string;
@@ -43,8 +44,13 @@ type SafeUser = {
   emailVerifiedAt?: Date;
   pendingEmail?: string;
   lastLoginAt?: Date;
+  locked: boolean;
+  lockReason?: 'manual' | 'failed_attempts';
   lockedUntil?: Date;
   preferences: UserPreferences;
+  twoFactorEnabled: boolean;
+  twoFactorEnrolledAt?: Date;
+  twoFactorLastVerifiedAt?: Date;
   createdAt: Date;
   updatedAt: Date;
   company?: {
@@ -67,6 +73,7 @@ type UserListItem = {
   avatarUrl?: string;
   emailVerified: boolean;
   locked: boolean;
+  lockReason?: 'manual' | 'failed_attempts';
   lockedUntil?: Date;
   mustChangePassword: boolean;
   lastLoginAt?: Date;
@@ -351,7 +358,7 @@ export class UsersService {
       throw new NotFoundException('Utilisateur non trouve');
     }
 
-    await this.assertCanManageUserSecurity(actor, user, false);
+    await this.assertCanManageUserSecurity(actor, user);
 
     const durationMinutes = dto.durationMinutes || 60;
     const lockedUntil = new Date(Date.now() + durationMinutes * 60 * 1000);
@@ -374,7 +381,7 @@ export class UsersService {
       throw new NotFoundException('Utilisateur non trouve');
     }
 
-    await this.assertCanManageUserSecurity(actor, user, true);
+    await this.assertCanManageUserSecurity(actor, user);
 
     user.lockedUntil = null as any;
     user.failedLoginAttempts = 0;
@@ -412,7 +419,7 @@ export class UsersService {
     return this.toSafeUser(user, { companyRole });
   }
 
-  async getUserActivity(
+  async getMyActivity(
     actor: User,
     userId: string,
     query: ActivityHistoryQueryDto,
@@ -441,24 +448,59 @@ export class UsersService {
       .take(limit)
       .getMany();
 
-    return {
-      items: items.map((item) => ({
-        id: item.id,
-        action: item.action,
-        entityType: item.entityType,
-        entityId: item.entityId,
-        companyId: item.companyId,
-        ipAddress: item.ipAddress,
-        createdAt: item.createdAt,
-        metadata: item.metadataJson || {},
-      })),
-      meta: {
-        page,
-        limit,
-        total,
-        totalPages: total ? Math.ceil(total / limit) : 0,
-      },
-    };
+    return this.toActivityHistory(items, page, limit, total);
+  }
+
+  async getUserActivity(
+    actor: User,
+    userId: string,
+    query: ActivityHistoryQueryDto,
+  ) {
+    await this.assertCanAccessUser(actor, userId);
+
+    const qb = this.activityLogRepo
+      .createQueryBuilder('activity')
+      .leftJoinAndSelect('activity.actor', 'actor')
+      .where(
+        new Brackets((activityScope) => {
+          activityScope
+            .where(
+              `activity.actorUserId = :userId
+               AND activity.entityType IN (:...accountEntityTypes)`,
+              {
+                userId,
+                accountEntityTypes: ['users', 'auth', 'notifications'],
+              },
+            )
+            .orWhere(
+              `activity.entityType = :userEntityType
+               AND activity.entityId = :userId`,
+              {
+                userEntityType: 'users',
+                userId,
+              },
+            );
+        }),
+      )
+      .orderBy('activity.createdAt', 'DESC');
+
+    if (actor.role !== UserRole.PLATFORM_ADMIN && actor.id !== userId) {
+      const managedCompanyId = await this.resolveManagedCompanyId(actor);
+      qb.andWhere('activity.companyId = :companyId', {
+        companyId: managedCompanyId,
+      });
+    }
+
+    const page = query.page || 1;
+    const limit = query.limit || 20;
+    const total = await qb.getCount();
+    const items = await qb
+      .clone()
+      .skip((page - 1) * limit)
+      .take(limit)
+      .getMany();
+
+    return this.toActivityHistory(items, page, limit, total);
   }
 
   async exportUsers(actor: User, query: ExportUsersQueryDto) {
@@ -517,8 +559,16 @@ export class UsersService {
           .getCount(),
         this.userRepo
           .createQueryBuilder('user')
-          .where('user.lockedUntil IS NOT NULL')
-          .andWhere('user.lockedUntil > :now', { now })
+          .where(
+            new Brackets((subQb) => {
+              subQb
+                .where('user.lockedUntil IS NOT NULL')
+                .andWhere('user.lockedUntil > :now', { now })
+                .orWhere('user.failedLoginAttempts >= :maxAttempts', {
+                  maxAttempts: LOGIN_MAX_ATTEMPTS,
+                });
+            }),
+          )
           .getCount(),
         this.userRepo.count({ where: { emailVerified: true } }),
         this.userRepo
@@ -595,8 +645,16 @@ export class UsersService {
 
     if (query.locked !== undefined) {
       if (query.locked) {
-        qb.andWhere('user.lockedUntil IS NOT NULL')
-          .andWhere('user.lockedUntil > :now', { now });
+        qb.andWhere(
+          new Brackets((subQb) => {
+            subQb
+              .where('user.lockedUntil IS NOT NULL')
+              .andWhere('user.lockedUntil > :now', { now })
+              .orWhere('user.failedLoginAttempts >= :maxAttempts', {
+                maxAttempts: LOGIN_MAX_ATTEMPTS,
+              });
+          }),
+        );
       } else {
         qb.andWhere(
           new Brackets((subQb) => {
@@ -604,7 +662,9 @@ export class UsersService {
               .where('user.lockedUntil IS NULL')
               .orWhere('user.lockedUntil <= :now', { now });
           }),
-        );
+        ).andWhere('user.failedLoginAttempts < :maxAttempts', {
+          maxAttempts: LOGIN_MAX_ATTEMPTS,
+        });
       }
     }
 
@@ -706,10 +766,35 @@ export class UsersService {
     );
   }
 
+  private toActivityHistory(
+    items: ActivityLog[],
+    page: number,
+    limit: number,
+    total: number,
+  ) {
+    return {
+      items: items.map((item) => ({
+        id: item.id,
+        action: item.action,
+        entityType: item.entityType,
+        entityId: item.entityId,
+        companyId: item.companyId,
+        ipAddress: item.ipAddress,
+        createdAt: item.createdAt,
+        metadata: item.metadataJson || {},
+      })),
+      meta: {
+        page,
+        limit,
+        total,
+        totalPages: total ? Math.ceil(total / limit) : 0,
+      },
+    };
+  }
+
   private async assertCanManageUserSecurity(
     actor: User,
     targetUser: User,
-    allowSelfUnlock: boolean,
   ) {
     if (targetUser.role === UserRole.PLATFORM_ADMIN) {
       if (actor.role !== UserRole.PLATFORM_ADMIN) {
@@ -717,25 +802,28 @@ export class UsersService {
           "Vous ne pouvez pas modifier le verrouillage d'un administrateur plateforme.",
         );
       }
-      if (actor.id === targetUser.id && !allowSelfUnlock) {
+      if (actor.id === targetUser.id) {
         throw new BadRequestException(
-          'Vous ne pouvez pas verrouiller votre propre compte.',
+          'Vous ne pouvez pas modifier le verrouillage de votre propre compte.',
         );
       }
       return;
     }
 
     if (actor.id === targetUser.id) {
-      if (allowSelfUnlock) {
-        return;
-      }
       throw new BadRequestException(
-        'Vous ne pouvez pas verrouiller votre propre compte.',
+        'Vous ne pouvez pas modifier le verrouillage de votre propre compte.',
       );
     }
 
     if (actor.role === UserRole.PLATFORM_ADMIN) {
       return;
+    }
+
+    if (actor.role !== UserRole.OWNER) {
+      throw new ForbiddenException(
+        "Seul l'administrateur plateforme ou le proprietaire de l'entreprise peut debloquer ce compte.",
+      );
     }
 
     const managedCompanyId = await this.resolveManagedCompanyId(actor);
@@ -750,18 +838,13 @@ export class UsersService {
       );
     }
 
-    const actorScopedRole =
-      (await this.findMembershipRole(actor.id, managedCompanyId)) || actor.role;
     const targetScopedRole =
       (await this.findMembershipRole(targetUser.id, managedCompanyId)) ||
       targetUser.role;
 
-    if (
-      this.getSecurityRoleRank(targetScopedRole) >=
-      this.getSecurityRoleRank(actorScopedRole)
-    ) {
+    if (targetScopedRole === UserRole.OWNER) {
       throw new ForbiddenException(
-        "Vous ne pouvez pas modifier le verrouillage d'un utilisateur ayant un role equivalent ou superieur.",
+        "Seul un administrateur plateforme peut debloquer un business owner.",
       );
     }
   }
@@ -815,11 +898,16 @@ export class UsersService {
       emailVerifiedAt: user.emailVerifiedAt,
       pendingEmail: user.pendingEmail,
       lastLoginAt: user.lastLoginAt,
+      locked: this.isUserLocked(user),
+      lockReason: this.getUserLockReason(user),
       lockedUntil:
-        user.lockedUntil && user.lockedUntil.getTime() > Date.now()
+        this.isTemporarilyLocked(user)
           ? user.lockedUntil
           : undefined,
       preferences: user.preferences || {},
+      twoFactorEnabled: user.twoFactorEnabled,
+      twoFactorEnrolledAt: user.twoFactorEnrolledAt,
+      twoFactorLastVerifiedAt: user.twoFactorLastVerifiedAt,
       createdAt: user.createdAt,
       updatedAt: user.updatedAt,
       company: user.company
@@ -848,14 +936,38 @@ export class UsersService {
       companyName: user.company?.name,
       avatarUrl: user.avatarUrl,
       emailVerified: user.emailVerified,
-      locked:
-        !!user.lockedUntil && user.lockedUntil.getTime() > Date.now(),
-      lockedUntil: user.lockedUntil,
+      locked: this.isUserLocked(user),
+      lockReason: this.getUserLockReason(user),
+      lockedUntil: this.isTemporarilyLocked(user) ? user.lockedUntil : undefined,
       mustChangePassword: user.mustChangePassword,
       lastLoginAt: user.lastLoginAt,
       createdAt: user.createdAt,
       membershipIsDefault: extra.membershipIsDefault ?? false,
     };
+  }
+
+  private isLockedByFailedAttempts(user: User) {
+    return (user.failedLoginAttempts || 0) >= LOGIN_MAX_ATTEMPTS;
+  }
+
+  private isTemporarilyLocked(user: User) {
+    return !!user.lockedUntil && user.lockedUntil.getTime() > Date.now();
+  }
+
+  private isUserLocked(user: User) {
+    return this.isTemporarilyLocked(user) || this.isLockedByFailedAttempts(user);
+  }
+
+  private getUserLockReason(
+    user: User,
+  ): 'manual' | 'failed_attempts' | undefined {
+    if (this.isTemporarilyLocked(user)) {
+      return 'manual';
+    }
+    if (this.isLockedByFailedAttempts(user)) {
+      return 'failed_attempts';
+    }
+    return undefined;
   }
 
   private buildCsv(items: UserListItem[]) {
@@ -991,24 +1103,5 @@ export class UsersService {
       return true;
     }
     return false;
-  }
-
-  private getSecurityRoleRank(role?: string) {
-    switch (role) {
-      case UserRole.PLATFORM_ADMIN:
-        return 100;
-      case UserRole.OWNER:
-        return 80;
-      case UserRole.MANAGER:
-        return 60;
-      case UserRole.ACCOUNTANT:
-        return 40;
-      case UserRole.EMPLOYEE:
-        return 30;
-      case UserRole.CLIENT:
-        return 10;
-      default:
-        return 0;
-    }
   }
 }

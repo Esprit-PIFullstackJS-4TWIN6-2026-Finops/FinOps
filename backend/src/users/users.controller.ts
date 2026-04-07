@@ -132,7 +132,7 @@ export class UsersController {
     @CurrentUser() user: User,
     @Query() query: ActivityHistoryQueryDto,
   ) {
-    return this.usersService.getUserActivity(user, user.id, query);
+    return this.usersService.getMyActivity(user, user.id, query);
   }
 
   @Get('stats')
@@ -171,7 +171,7 @@ export class UsersController {
 
   @Patch(':id/lock')
   @UseGuards(RolesGuard)
-  @Roles(UserRole.PLATFORM_ADMIN, UserRole.OWNER, UserRole.MANAGER)
+  @Roles(UserRole.PLATFORM_ADMIN, UserRole.OWNER)
   async lockUser(
     @CurrentUser() user: User,
     @Param('id') id: string,
@@ -182,7 +182,7 @@ export class UsersController {
 
   @Patch(':id/unlock')
   @UseGuards(RolesGuard)
-  @Roles(UserRole.PLATFORM_ADMIN, UserRole.OWNER, UserRole.MANAGER)
+  @Roles(UserRole.PLATFORM_ADMIN, UserRole.OWNER)
   async unlockUser(@CurrentUser() user: User, @Param('id') id: string) {
     return this.usersService.unlockUser(user, id);
   }

@@ -28,7 +28,7 @@ export interface UserNotificationPreferences {
 
 export interface UserPreferences {
   language?: string;
-  theme?: 'light' | 'dark' | 'system';
+  theme?: 'light' | 'dark';
   timezone?: string;
   dateFormat?: string;
   notifications?: UserNotificationPreferences;
@@ -102,6 +102,58 @@ export class User {
 
   @Column({ name: 'last_login_at', type: 'datetime', nullable: true })
   lastLoginAt?: Date;
+
+  @Column({ name: 'two_factor_enabled', default: false })
+  twoFactorEnabled: boolean;
+
+  @Exclude()
+  @Column({ name: 'two_factor_secret', type: 'text', nullable: true })
+  twoFactorSecret?: string;
+
+  @Exclude()
+  @Column({ name: 'two_factor_pending_secret', type: 'text', nullable: true })
+  twoFactorPendingSecret?: string;
+
+  @Exclude()
+  @Column({ name: 'two_factor_pending_secret_expires_at', type: 'datetime', nullable: true })
+  twoFactorPendingSecretExpiresAt?: Date;
+
+  @Column({ name: 'two_factor_credential_id', nullable: true })
+  twoFactorCredentialId?: string;
+
+  @Exclude()
+  @Column({ name: 'two_factor_credential_public_key', type: 'text', nullable: true })
+  twoFactorCredentialPublicKey?: string;
+
+  @Column({ name: 'two_factor_credential_counter', default: 0 })
+  twoFactorCredentialCounter: number;
+
+  @Column({ name: 'two_factor_credential_transports_json', type: 'simple-json', nullable: true })
+  twoFactorCredentialTransports?: string[];
+
+  @Column({ name: 'two_factor_credential_device_type', nullable: true })
+  twoFactorCredentialDeviceType?: string;
+
+  @Column({ name: 'two_factor_credential_backed_up', default: false })
+  twoFactorCredentialBackedUp: boolean;
+
+  @Column({ name: 'two_factor_enrolled_at', type: 'datetime', nullable: true })
+  twoFactorEnrolledAt?: Date;
+
+  @Column({ name: 'two_factor_last_verified_at', type: 'datetime', nullable: true })
+  twoFactorLastVerifiedAt?: Date;
+
+  @Exclude()
+  @Column({ name: 'two_factor_challenge', nullable: true })
+  twoFactorChallenge?: string;
+
+  @Exclude()
+  @Column({ name: 'two_factor_challenge_expires_at', type: 'datetime', nullable: true })
+  twoFactorChallengeExpiresAt?: Date;
+
+  @Exclude()
+  @Column({ name: 'two_factor_challenge_purpose', nullable: true })
+  twoFactorChallengePurpose?: 'registration' | 'authentication';
 
   @CreateDateColumn({ name: 'created_at' })
   createdAt: Date;

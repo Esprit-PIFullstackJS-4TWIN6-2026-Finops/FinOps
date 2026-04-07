@@ -29,7 +29,7 @@ export interface UserNotificationPreferences {
 
 export interface UserPreferences {
   language?: string;
-  theme?: 'light' | 'dark' | 'system';
+  theme?: 'light' | 'dark';
   timezone?: string;
   dateFormat?: string;
   notifications?: UserNotificationPreferences;
@@ -49,8 +49,13 @@ export interface User {
   emailVerifiedAt?: string;
   pendingEmail?: string;
   lastLoginAt?: string;
+  locked?: boolean;
+  lockReason?: 'manual' | 'failed_attempts';
   lockedUntil?: string;
   preferences?: UserPreferences;
+  twoFactorEnabled?: boolean;
+  twoFactorEnrolledAt?: string;
+  twoFactorLastVerifiedAt?: string;
   createdAt?: string;
   updatedAt?: string;
   company?: {

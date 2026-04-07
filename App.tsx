@@ -14,12 +14,15 @@ import {
   XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, 
   AreaChart, Area, BarChart, Bar, LineChart, Line
 } from 'recharts';
+import appLogo from './assets/logoFinops.png';
 import { UserRole, User, Tenant, Invoice, Expense, Client, AuditLog, UserPreferences, mapBackendRoleToFrontend } from './types';
 import {
   BackendAPI as RealAPI,
   auditFromBackend,
   checkBackendHealth,
   clientFromBackend,
+  formatActivityContext,
+  formatActivitySentence,
   invoiceFromBackend,
   type AiAnalyzeExpensesResponse,
   type AiForecastResponse,
@@ -30,6 +33,8 @@ import {
   type EmailVerificationRequestResponse,
   type ExpenseBackend,
   type NotificationBackend,
+  type TwoFactorLoginChallengeBackend,
+  type TwoFactorSetupBackend,
   type UserActivityBackend,
   type UserBackend,
   type UserListItemBackend,
@@ -61,6 +66,40 @@ function localeForLang(lang: UiLang): string {
   if (s.startsWith('arb') || s.includes('Arab')) return 'ar';
   if (s.startsWith('fra')) return 'fr-FR';
   return 'en-US';
+}
+
+type ThemePreference = NonNullable<UserPreferences['theme']>;
+
+const THEME_PREFERENCE_STORAGE_KEY = 'finops_theme_preference';
+
+function isThemePreference(value: string | null): value is ThemePreference {
+  return value === 'light' || value === 'dark';
+}
+
+function normalizeThemePreference(value: string | null | undefined): ThemePreference {
+  if (value === 'light') {
+    return 'light';
+  }
+  if (value === 'dark' || value === 'system') {
+    return 'dark';
+  }
+  return 'light';
+}
+
+function getStoredThemePreference(): ThemePreference {
+  const storedPreference = localStorage.getItem(THEME_PREFERENCE_STORAGE_KEY);
+  if (storedPreference === 'system') {
+    return 'dark';
+  }
+  if (isThemePreference(storedPreference)) {
+    return storedPreference;
+  }
+
+  return normalizeThemePreference(localStorage.getItem('theme'));
+}
+
+function resolveIsDarkModeForPreference(theme: ThemePreference): boolean {
+  return theme === 'dark';
 }
 
 /* ================================================================
@@ -186,6 +225,28 @@ const Card: React.FC<{ children: React.ReactNode; className?: string; hover?: bo
   </div>
 );
 
+const AppLogoMark: React.FC<{ className?: string; alt?: string }> = ({
+  className = '',
+  alt = 'FinOps logo',
+}) => (
+  <img
+    src={appLogo}
+    alt={alt}
+    className={`shrink-0 object-contain ${className}`}
+  />
+);
+
+const AppBrandLockup: React.FC<{
+  logoClassName?: string;
+  textClassName?: string;
+  className?: string;
+}> = ({ logoClassName = 'h-[54px] w-[54px]', textClassName = 'font-bold text-lg tracking-tight text-gray-900 dark:text-white', className = '' }) => (
+  <div className={`flex items-center gap-3 ${className}`}>
+    <AppLogoMark className={logoClassName} />
+    <span className={textClassName}>FinOps</span>
+  </div>
+);
+
 const PageHeader: React.FC<{ title: string; description?: string; actions?: React.ReactNode }> = ({ title, description, actions }) => (
   <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
     <div>
@@ -295,8 +356,13 @@ function mapBackendUserToFrontendUser(user: UserBackend): User {
     emailVerifiedAt: user.emailVerifiedAt,
     pendingEmail: user.pendingEmail,
     lastLoginAt: user.lastLoginAt,
+    locked: user.locked,
+    lockReason: user.lockReason,
     lockedUntil: user.lockedUntil,
     preferences: user.preferences,
+    twoFactorEnabled: user.twoFactorEnabled,
+    twoFactorEnrolledAt: user.twoFactorEnrolledAt,
+    twoFactorLastVerifiedAt: user.twoFactorLastVerifiedAt,
     createdAt: user.createdAt,
     updatedAt: user.updatedAt,
     company: user.company,
@@ -325,6 +391,10 @@ function formatDateTime(value: string | undefined, lang: UiLang, fallback = '—
     dateStyle: 'medium',
     timeStyle: 'short',
   });
+}
+
+function normalizeVerificationCode(value: string): string {
+  return value.replace(/\D/g, '').slice(0, 6);
 }
 
 const ADVANCED_NLLB_LANGUAGES: Array<{
@@ -519,7 +589,12 @@ const LanguageSwitcher: React.FC<{
 };
 
 const App: React.FC = () => {
-  const [isDarkMode, setIsDarkMode] = useState(() => localStorage.getItem('theme') === 'dark');
+  const [themePreference, setThemePreference] = useState<ThemePreference>(() =>
+    getStoredThemePreference(),
+  );
+  const [isDarkMode, setIsDarkMode] = useState(() =>
+    resolveIsDarkModeForPreference(getStoredThemePreference()),
+  );
   const [lang, setLang] = useState<UiLang>(() => localStorage.getItem('finops_lang') || 'fr');
   const [availableDynamicLangs, setAvailableDynamicLangs] = useState<string[]>(() => [...FALLBACK_NLLB_LANGUAGE_CODES]);
   const [isTranslatingUi, setIsTranslatingUi] = useState(false);
@@ -592,9 +667,17 @@ const App: React.FC = () => {
   }, []);
 
   useEffect(() => {
-    if (isDarkMode) { document.documentElement.classList.add('dark'); localStorage.setItem('theme', 'dark'); }
-    else { document.documentElement.classList.remove('dark'); localStorage.setItem('theme', 'light'); }
-  }, [isDarkMode]);
+    const nextIsDark = themePreference === 'dark';
+    setIsDarkMode(nextIsDark);
+    if (nextIsDark) {
+      document.documentElement.classList.add('dark');
+      localStorage.setItem('theme', 'dark');
+    } else {
+      document.documentElement.classList.remove('dark');
+      localStorage.setItem('theme', 'light');
+    }
+    localStorage.setItem(THEME_PREFERENCE_STORAGE_KEY, themePreference);
+  }, [themePreference]);
 
   useEffect(() => {
     if (DYNAMIC_TO_STATIC_UI_LANG[lang]) {
@@ -607,6 +690,13 @@ const App: React.FC = () => {
     document.documentElement.dir = dir;
     document.documentElement.lang = htmlLang;
   }, [lang]);
+
+  useEffect(() => {
+    const nextTheme = user?.preferences?.theme;
+    if (nextTheme) {
+      setThemePreference(normalizeThemePreference(nextTheme));
+    }
+  }, [user?.id, user?.preferences?.theme]);
 
   useEffect(() => {
     const loadUserCompanies = async () => {
@@ -724,6 +814,10 @@ const App: React.FC = () => {
     }
   };
 
+  const handleToggleTheme = () => {
+    setThemePreference(isDarkMode ? 'light' : 'dark');
+  };
+
   const handleLogout = async () => {
     RealAPI.logout();
     setUser(null); setTenant(null); setShowAuth(false); setActiveTab('dashboard');
@@ -798,9 +892,7 @@ const App: React.FC = () => {
     return (
       <div className="min-h-screen bg-white dark:bg-gray-950 flex flex-col items-center justify-center gap-6">
         <div className="relative">
-          <div className="w-16 h-16 bg-primary-600 rounded-2xl flex items-center justify-center text-white shadow-xl shadow-primary-600/30">
-            <ShieldCheck size={32} />
-          </div>
+          <AppLogoMark className="w-24 h-24" />
           <Loader2 size={20} className="absolute -bottom-1 -right-1 text-primary-600 animate-spin" />
         </div>
         <div className="text-center space-y-1">
@@ -870,7 +962,7 @@ const App: React.FC = () => {
     if (showAuth) {
       return <AuthView lang={lang} setLang={setLang} languageOptions={languageOptions} translationUnavailableMessage={translationUnavailableMessage} mode={authMode} setMode={setAuthMode} onLogin={handleLogin} useRealBackend={useRealBackend} onCancel={() => setShowAuth(false)} onShowRegisterBusiness={() => { setShowAuth(false); setShowRegisterBusiness(true); }} />;
     }
-    return <LandingPageView lang={lang} setLang={setLang} languageOptions={languageOptions} translationUnavailableMessage={translationUnavailableMessage} isDarkMode={isDarkMode} setIsDarkMode={setIsDarkMode} onEnter={() => { setAuthMode('login'); setShowAuth(true); }} onGetStarted={() => setShowRegisterBusiness(true)} />;
+    return <LandingPageView lang={lang} setLang={setLang} languageOptions={languageOptions} translationUnavailableMessage={translationUnavailableMessage} isDarkMode={isDarkMode} onToggleTheme={handleToggleTheme} onEnter={() => { setAuthMode('login'); setShowAuth(true); }} onGetStarted={() => setShowRegisterBusiness(true)} />;
   }
 
   if (user.mustChangePassword) {
@@ -910,12 +1002,11 @@ const App: React.FC = () => {
       {/* Sidebar */}
       <aside className={`${isSidebarOpen ? 'w-64' : 'w-[72px]'} bg-white dark:bg-gray-900 border-e border-gray-200 dark:border-gray-800 transition-all duration-300 flex flex-col fixed h-full z-50`}>
         <div className={`h-16 flex items-center ${isSidebarOpen ? 'px-5' : 'px-0 justify-center'} border-b border-gray-100 dark:border-gray-800`}>
-          <div className="flex items-center gap-3">
-            <div className="w-9 h-9 bg-primary-600 rounded-xl flex items-center justify-center text-white shrink-0 shadow-md shadow-primary-600/25">
-              <ShieldCheck size={20} />
-            </div>
-            {isSidebarOpen && <span className="font-bold text-lg text-gray-900 dark:text-white tracking-tight">FinOps</span>}
-          </div>
+          {isSidebarOpen ? (
+            <AppBrandLockup />
+          ) : (
+            <AppLogoMark className="h-[54px] w-[54px]" />
+          )}
         </div>
 
         <nav className="flex-1 p-3 space-y-0.5 overflow-y-auto overflow-x-hidden">
@@ -988,7 +1079,7 @@ const App: React.FC = () => {
                 </span>
               )}
             </button>
-            <button onClick={() => setIsDarkMode(!isDarkMode)} className="p-2 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-xl transition-colors text-gray-500 dark:text-gray-400">
+            <button onClick={handleToggleTheme} className="p-2 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-xl transition-colors text-gray-500 dark:text-gray-400">
               {isDarkMode ? <Sun size={18} /> : <Moon size={18} />}
             </button>
             <div className="h-6 w-px bg-gray-200 dark:bg-gray-800"></div>
@@ -1058,7 +1149,7 @@ const App: React.FC = () => {
               {activeTab === 'users' && <AdminUsersView user={user} lang={lang} />}
               {activeTab === 'join-company' && <EmployeeCompanyJoinView lang={lang} />}
               {activeTab === 'employees' && user.companyId && <AdminEmployeesView companyId={user.companyId} lang={lang} />}
-              {activeTab === 'settings' && <AdminSettingsView user={user} onUserUpdate={setUser} tenant={tenant} onUpdate={setTenant} companyId={user.activeCompanyId || user.companyId} lang={lang} setLang={setLang} setIsDarkMode={setIsDarkMode} />}
+              {activeTab === 'settings' && <AdminSettingsView user={user} onUserUpdate={setUser} tenant={tenant} onUpdate={setTenant} companyId={user.activeCompanyId || user.companyId} lang={lang} setLang={setLang} themePreference={themePreference} setThemePreference={setThemePreference} />}
             </>
           ) : (
             <>
@@ -1066,7 +1157,7 @@ const App: React.FC = () => {
               {activeTab === 'invoices' && <ClientInvoicesView user={user} lang={lang} />}
               {activeTab === 'projects' && <ClientProjectsView lang={lang} />}
               {activeTab === 'support' && <ClientSupportView lang={lang} />}
-              {activeTab === 'settings' && <AdminSettingsView user={user} onUserUpdate={setUser} tenant={null} onUpdate={() => {}} lang={lang} setLang={setLang} setIsDarkMode={setIsDarkMode} />}
+              {activeTab === 'settings' && <AdminSettingsView user={user} onUserUpdate={setUser} tenant={null} onUpdate={() => {}} lang={lang} setLang={setLang} themePreference={themePreference} setThemePreference={setThemePreference} />}
             </>
           )}
         </div>
@@ -1485,14 +1576,11 @@ const ChangePasswordModal: React.FC<{ lang: UiLang; onSuccess: () => void }> = (
    LANDING PAGE
    ================================================================ */
 
-const LandingPageView: React.FC<{ lang: UiLang; setLang: (l: UiLang) => void; languageOptions: LanguageOption[]; translationUnavailableMessage: string | null; isDarkMode: boolean; setIsDarkMode: (v: boolean) => void; onEnter: () => void; onGetStarted: () => void }> = ({ lang, setLang, languageOptions, translationUnavailableMessage, isDarkMode, setIsDarkMode, onEnter, onGetStarted }) => (
+const LandingPageView: React.FC<{ lang: UiLang; setLang: (l: UiLang) => void; languageOptions: LanguageOption[]; translationUnavailableMessage: string | null; isDarkMode: boolean; onToggleTheme: () => void; onEnter: () => void; onGetStarted: () => void }> = ({ lang, setLang, languageOptions, translationUnavailableMessage, isDarkMode, onToggleTheme, onEnter, onGetStarted }) => (
   <div className="min-h-screen bg-white dark:bg-gray-950 transition-colors overflow-hidden">
     <nav className="fixed top-0 w-full z-50 bg-white/80 dark:bg-gray-950/80 backdrop-blur-xl border-b border-gray-200 dark:border-gray-800">
       <div className="max-w-6xl mx-auto px-6 h-16 flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <div className="w-9 h-9 bg-primary-600 rounded-xl flex items-center justify-center text-white shadow-md shadow-primary-600/25"><ShieldCheck size={20} /></div>
-          <span className="font-bold text-lg tracking-tight text-gray-900 dark:text-white">FinOps</span>
-        </div>
+        <AppBrandLockup />
         <div className="hidden md:flex items-center gap-8 text-sm font-medium text-gray-500 dark:text-gray-400">
           <a href="#features" className="hover:text-primary-600 transition-colors">{t('landing.features', lang)}</a>
           <a href="#stats" className="hover:text-primary-600 transition-colors">{t('landing.performance', lang)}</a>
@@ -1500,7 +1588,9 @@ const LandingPageView: React.FC<{ lang: UiLang; setLang: (l: UiLang) => void; la
         </div>
         <div className="flex items-center gap-3">
           <LanguageSwitcher lang={lang} setLang={setLang} options={languageOptions} unavailableMessage={translationUnavailableMessage} compact />
-          <button onClick={() => setIsDarkMode(!isDarkMode)} className="p-2 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-xl text-gray-500 dark:text-gray-400 transition-colors"><Sun size={18} /></button>
+          <button onClick={onToggleTheme} className="p-2 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-xl text-gray-500 dark:text-gray-400 transition-colors">
+            {isDarkMode ? <Sun size={18} /> : <Moon size={18} />}
+          </button>
           <PrimaryButton onClick={onEnter} variant="outline" className="px-5 py-2 text-sm">{t('landing.connection', lang)}</PrimaryButton>
           <PrimaryButton onClick={onGetStarted} className="px-5 py-2 text-sm">{t('landing.start', lang)}</PrimaryButton>
         </div>
@@ -1545,10 +1635,11 @@ const LandingPageView: React.FC<{ lang: UiLang; setLang: (l: UiLang) => void; la
 
     <footer className="py-12 border-t border-gray-200 dark:border-gray-800">
       <div className="max-w-6xl mx-auto px-6 flex flex-col md:flex-row justify-between items-center gap-6">
-        <div className="flex items-center gap-2">
-          <div className="w-7 h-7 bg-primary-600 rounded-lg flex items-center justify-center text-white"><ShieldCheck size={14} /></div>
-          <span className="font-bold text-gray-900 dark:text-white">FinOps</span>
-        </div>
+        <AppBrandLockup
+          logoClassName="h-[42px] w-[42px]"
+          textClassName="font-bold text-gray-900 dark:text-white"
+          className="gap-2"
+        />
         <p className="text-xs text-gray-500">{t('landing.footer', lang)}</p>
       </div>
     </footer>
@@ -1592,8 +1683,10 @@ const AuthView: React.FC<{ lang: UiLang; setLang: (l: UiLang) => void; languageO
   } | null>(null);
   const [forgotError, setForgotError] = useState('');
   const [forgotErrorSolution, setForgotErrorSolution] = useState<string | undefined>();
-  const [backendCheckStatus, setBackendCheckStatus] = useState<'idle' | 'ok' | 'ko' | 'checking'>('idle');
   const [roleAction, setRoleAction] = useState<'login' | 'create'>('login');
+  const [pendingTwoFactor, setPendingTwoFactor] = useState<TwoFactorLoginChallengeBackend | null>(null);
+  const [twoFactorCode, setTwoFactorCode] = useState('');
+  const [twoFactorProcessing, setTwoFactorProcessing] = useState(false);
   const [employeeRequestForm, setEmployeeRequestForm] = useState({
     fullName: '',
     email: '',
@@ -1687,10 +1780,36 @@ const AuthView: React.FC<{ lang: UiLang; setLang: (l: UiLang) => void; languageO
     } finally { setForgotLoading(false); }
   };
 
-  const handleCheckBackend = async () => {
-    setBackendCheckStatus('checking');
-    const healthy = await checkBackendHealth();
-    setBackendCheckStatus(healthy ? 'ok' : 'ko');
+  const handleTwoFactorVerification = async (
+    challenge = pendingTwoFactor,
+  ) => {
+    if (!challenge) return;
+    if (normalizeVerificationCode(twoFactorCode).length !== 6) {
+      setError('Enter the 6-digit code from your authenticator app.');
+      setErrorSolution(undefined);
+      return;
+    }
+    setTwoFactorProcessing(true);
+    setError('');
+    setErrorSolution(undefined);
+    try {
+      const result = await RealAPI.verifyTwoFactorLogin(
+        challenge.userId,
+        normalizeVerificationCode(twoFactorCode),
+      );
+      setPendingTwoFactor(null);
+      setTwoFactorCode('');
+      onLogin(
+        mapBackendUserToFrontendUser(result.user),
+        result.mustChangePassword,
+      );
+    } catch (err) {
+      const { message, solution } = getErrorMessage(err);
+      setError(message);
+      setErrorSolution(solution);
+    } finally {
+      setTwoFactorProcessing(false);
+    }
   };
 
   const handleSubmit = async () => {
@@ -1699,10 +1818,16 @@ const AuthView: React.FC<{ lang: UiLang; setLang: (l: UiLang) => void; languageO
     if (mode === 'login') {
       try {
         const data = await RealAPI.login(email, password);
-        onLogin(
-          mapBackendUserToFrontendUser(data.user),
-          data.mustChangePassword,
-        );
+        if (data.requiresTwoFactor) {
+          setPendingTwoFactor(data.twoFactor);
+          setPassword('');
+          setTwoFactorCode('');
+        } else {
+          onLogin(
+            mapBackendUserToFrontendUser(data.user),
+            data.mustChangePassword,
+          );
+        }
       } catch (err) { const { message, solution } = getErrorMessage(err); setError(message); setErrorSolution(solution); }
     } else {
       setError(t('auth.registerViaBusiness', lang));
@@ -1788,16 +1913,102 @@ const AuthView: React.FC<{ lang: UiLang; setLang: (l: UiLang) => void; languageO
     );
   }
 
+  if (pendingTwoFactor) {
+    return (
+      <div className="min-h-screen bg-gray-50 dark:bg-gray-950 flex items-center justify-center p-6">
+        <Card className="max-w-md w-full p-8">
+          <div className="flex items-center justify-between mb-6">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 bg-primary-100 dark:bg-primary-900/30 rounded-xl flex items-center justify-center">
+                <ShieldCheck size={20} className="text-primary-600" />
+              </div>
+              <div>
+                <h1 className="text-lg font-bold text-gray-900 dark:text-white">Authenticator code required</h1>
+                <p className="text-xs text-gray-500">{pendingTwoFactor.email}</p>
+              </div>
+            </div>
+            <button
+              onClick={() => {
+                setPendingTwoFactor(null);
+                setTwoFactorCode('');
+                setError('');
+                setErrorSolution(undefined);
+              }}
+              className="p-2 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-xl text-gray-400 transition-colors"
+            >
+              <X size={18} />
+            </button>
+          </div>
+
+          <div className="rounded-2xl bg-gray-50 dark:bg-gray-800/60 border border-gray-100 dark:border-gray-800 p-4 space-y-2">
+            <p className="font-semibold text-sm text-gray-900 dark:text-white">
+              Finish signing in with your authenticator app
+            </p>
+            <p className="text-sm text-gray-500">
+              Open Google Authenticator, Microsoft Authenticator, Authy, or another TOTP app and enter the current 6-digit code for this account.
+            </p>
+          </div>
+
+          <div className="mt-4">
+            <InputField
+              label="Verification code"
+              type="text"
+              value={twoFactorCode}
+              onChange={(value) => setTwoFactorCode(normalizeVerificationCode(value))}
+              placeholder="123456"
+              icon={<Hash size={16} />}
+            />
+            <p className="mt-2 text-xs text-gray-500">
+              This sign-in check expires {formatDateTime(pendingTwoFactor.expiresAt, lang)}.
+            </p>
+          </div>
+
+          {error && (
+            <div className="mt-4">
+              <ErrorAlert
+                message={error}
+                solution={errorSolution}
+                onDismiss={() => {
+                  setError('');
+                  setErrorSolution(undefined);
+                }}
+              />
+            </div>
+          )}
+
+          <div className="mt-6 space-y-3">
+            <PrimaryButton
+              onClick={() => void handleTwoFactorVerification()}
+              loading={twoFactorProcessing}
+              className="w-full py-3.5 text-sm"
+            >
+              <ShieldCheck size={16} /> Verify code
+            </PrimaryButton>
+            <PrimaryButton
+              onClick={() => {
+                setPendingTwoFactor(null);
+                setTwoFactorCode('');
+                setError('');
+                setErrorSolution(undefined);
+              }}
+              variant="outline"
+              className="w-full py-3.5 text-sm"
+            >
+              Back to sign in
+            </PrimaryButton>
+          </div>
+        </Card>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen bg-gray-50 dark:bg-gray-950 flex items-center justify-center p-6">
       <Card className="w-full max-w-lg overflow-hidden">
         <div className="p-8">
           {/* Header */}
           <div className="flex justify-between items-start mb-6">
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 bg-primary-600 rounded-xl flex items-center justify-center text-white shadow-md shadow-primary-600/25"><ShieldCheck size={22} /></div>
-              <span className="font-bold text-lg text-gray-900 dark:text-white">FinOps</span>
-            </div>
+            <AppBrandLockup logoClassName="h-[60px] w-[60px]" />
             <div className="flex items-center gap-1">
               <LanguageSwitcher lang={lang} setLang={setLang} options={languageOptions} unavailableMessage={translationUnavailableMessage} compact />
               <button onClick={onCancel} className="p-2 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-xl text-gray-400 transition-colors"><X size={18} /></button>
@@ -1937,23 +2148,6 @@ const AuthView: React.FC<{ lang: UiLang; setLang: (l: UiLang) => void; languageO
               <PrimaryButton onClick={handleSubmit} loading={isProcessing} className="w-full py-3.5 text-sm">
                 {t('auth.submit', lang)}
               </PrimaryButton>
-
-              {useRealBackend && (
-                <button
-                  type="button"
-                  onClick={handleCheckBackend}
-                  className="w-full text-xs font-medium text-gray-500 hover:text-primary-600 transition-colors"
-                >
-                  {backendCheckStatus === 'checking'
-                    ? t('auth.backendChecking', lang)
-                    : backendCheckStatus === 'ok'
-                    ? t('auth.backendOk', lang)
-                    : backendCheckStatus === 'ko'
-                    ? t('auth.backendKo', lang)
-                    : t('auth.backendTest', lang)}
-                </button>
-              )}
-
               <div className="text-center pt-2">
                 {useRealBackend ? (
                   <button onClick={onShowRegisterBusiness} className="text-xs font-medium text-gray-400 hover:text-primary-600 transition-colors">
@@ -3307,6 +3501,9 @@ const AdminAuditLogView: React.FC<{ lang: UiLang }> = ({ lang }) => {
 
 const AdminUsersView: React.FC<{ user: User; lang: UiLang }> = ({ user, lang }) => {
   const canAccessStats = user.role === UserRole.PLATFORM_ADMIN;
+  const canManageUserSecurity =
+    user.role === UserRole.PLATFORM_ADMIN ||
+    user.role === UserRole.BUSINESS_OWNER;
   const [filters, setFilters] = useState<{
     search: string;
     role: '' | UserRoleBackend;
@@ -3452,9 +3649,7 @@ const AdminUsersView: React.FC<{ user: User; lang: UiLang }> = ({ user, lang }) 
   }, [canAccessStats]);
 
   const selectedRow = rows.find((row) => row.id === selectedUserId);
-  const selectedUserIsLocked =
-    !!selectedUser?.lockedUntil &&
-    new Date(selectedUser.lockedUntil).getTime() > Date.now();
+  const selectedUserIsLocked = !!selectedUser?.locked;
 
   const handleExport = async (format: 'csv' | 'excel') => {
     if (!canAccessStats) return;
@@ -3918,61 +4113,65 @@ const AdminUsersView: React.FC<{ user: User; lang: UiLang }> = ({ user, lang }) 
                   <p className="text-xs uppercase tracking-wider font-semibold text-gray-500">Account state</p>
                   <p className="mt-1 font-semibold text-gray-900 dark:text-white">
                     {selectedUserIsLocked
-                      ? `Locked until ${formatDateTime(selectedUser.lockedUntil, lang)}`
+                      ? selectedUser.lockReason === 'failed_attempts'
+                        ? 'Locked after 6 failed login attempts. Unlock required.'
+                        : `Locked until ${formatDateTime(selectedUser.lockedUntil, lang)}`
                       : 'No active lock'}
                   </p>
                 </div>
               </div>
 
-              <div className="rounded-2xl border border-gray-100 dark:border-gray-800 p-4 space-y-3">
-                <div>
-                  <h4 className="font-bold text-gray-900 dark:text-white">Access controls</h4>
-                  <p className="text-sm text-gray-500">
-                    Manually lock or unlock this account directly from the platform.
-                  </p>
-                </div>
-                <div className="flex flex-col sm:flex-row gap-3">
-                  <div className="sm:w-40">
-                    <InputField
-                      label="Lock duration (min)"
-                      type="number"
-                      value={lockDuration}
-                      onChange={setLockDuration}
-                      disabled={selectedUser.id === user.id}
-                    />
+              {canManageUserSecurity ? (
+                <div className="rounded-2xl border border-gray-100 dark:border-gray-800 p-4 space-y-3">
+                  <div>
+                    <h4 className="font-bold text-gray-900 dark:text-white">Access controls</h4>
+                    <p className="text-sm text-gray-500">
+                      Manually lock or unlock this account directly from the platform.
+                    </p>
                   </div>
-                  <div className="flex items-end gap-2">
-                    <PrimaryButton
-                      onClick={() => void handleLock()}
-                      loading={actionLoading === 'lock'}
-                      disabled={selectedUser.id === user.id || selectedUserIsLocked}
-                      className="px-4 py-3 text-sm"
-                    >
-                      <AlertCircle size={14} /> Lock user
-                    </PrimaryButton>
-                    <PrimaryButton
-                      onClick={() => void handleUnlock()}
-                      loading={actionLoading === 'unlock'}
-                      disabled={!selectedUserIsLocked}
-                      variant="outline"
-                      className="px-4 py-3 text-sm"
-                    >
-                      <CheckCircle2 size={14} /> Unlock user
-                    </PrimaryButton>
+                  <div className="flex flex-col sm:flex-row gap-3">
+                    <div className="sm:w-40">
+                      <InputField
+                        label="Lock duration (min)"
+                        type="number"
+                        value={lockDuration}
+                        onChange={setLockDuration}
+                        disabled={selectedUser.id === user.id}
+                      />
+                    </div>
+                    <div className="flex items-end gap-2">
+                      <PrimaryButton
+                        onClick={() => void handleLock()}
+                        loading={actionLoading === 'lock'}
+                        disabled={selectedUser.id === user.id || selectedUserIsLocked}
+                        className="px-4 py-3 text-sm"
+                      >
+                        <AlertCircle size={14} /> Lock user
+                      </PrimaryButton>
+                      <PrimaryButton
+                        onClick={() => void handleUnlock()}
+                        loading={actionLoading === 'unlock'}
+                        disabled={!selectedUserIsLocked}
+                        variant="outline"
+                        className="px-4 py-3 text-sm"
+                      >
+                        <CheckCircle2 size={14} /> Unlock user
+                      </PrimaryButton>
+                    </div>
                   </div>
+                  {selectedUser.id === user.id && (
+                    <p className="text-xs text-amber-600 dark:text-amber-400">
+                      Self-lock is intentionally blocked.
+                    </p>
+                  )}
                 </div>
-                {selectedUser.id === user.id && (
-                  <p className="text-xs text-amber-600 dark:text-amber-400">
-                    Self-lock is intentionally blocked.
-                  </p>
-                )}
-              </div>
+              ) : null}
 
               <div className="rounded-2xl border border-gray-100 dark:border-gray-800 p-4">
                 <div className="flex items-center justify-between gap-3 mb-3">
                   <div>
                     <h4 className="font-bold text-gray-900 dark:text-white">Recent activity</h4>
-                    <p className="text-sm text-gray-500">Latest tracked actions for this account.</p>
+                    <p className="text-sm text-gray-500">Latest account-specific actions and access events.</p>
                   </div>
                   <PrimaryButton
                     onClick={() => selectedUserId && void loadSelectedUser(selectedUserId)}
@@ -3997,14 +4196,14 @@ const AdminUsersView: React.FC<{ user: User; lang: UiLang }> = ({ user, lang }) 
                       >
                         <div className="flex items-center justify-between gap-3">
                           <p className="font-semibold text-sm text-gray-900 dark:text-white">
-                            {item.action}
+                            {formatActivitySentence(item.action, item.entityType, item.entityId)}
                           </p>
                           <p className="text-xs text-gray-400">
                             {formatDateTime(item.createdAt, lang)}
                           </p>
                         </div>
                         <p className="text-xs text-gray-500 mt-1">
-                          {item.entityType} • {item.entityId}
+                          {formatActivityContext(item.entityType, item.entityId)}
                         </p>
                       </div>
                     ))}
@@ -4090,8 +4289,9 @@ const AdminSettingsView: React.FC<{
   companyId?: string;
   lang: UiLang;
   setLang: (l: UiLang) => void;
-  setIsDarkMode: (value: boolean) => void;
-}> = ({ user, onUserUpdate, tenant, onUpdate, companyId, lang, setLang, setIsDarkMode }) => {
+  themePreference: ThemePreference;
+  setThemePreference: (value: ThemePreference) => void;
+}> = ({ user, onUserUpdate, tenant, onUpdate, companyId, lang, setLang, themePreference, setThemePreference }) => {
   const canEditCompanySettings =
     !!companyId &&
     (user.role === UserRole.BUSINESS_OWNER ||
@@ -4103,9 +4303,9 @@ const AdminSettingsView: React.FC<{
   });
   const [preferencesForm, setPreferencesForm] = useState<UserPreferences>({
     language: user.preferences?.language || resolveStaticUiLang(lang),
-    theme:
-      user.preferences?.theme ||
-      (localStorage.getItem('theme') === 'dark' ? 'dark' : 'light'),
+    theme: user.preferences?.theme
+      ? normalizeThemePreference(user.preferences.theme)
+      : themePreference,
     timezone: user.preferences?.timezone || 'Africa/Tunis',
     dateFormat: user.preferences?.dateFormat || 'DD/MM/YYYY',
     notifications: {
@@ -4139,6 +4339,11 @@ const AdminSettingsView: React.FC<{
   const [error, setError] = useState('');
   const [errorSolution, setErrorSolution] = useState<string | undefined>();
   const [success, setSuccess] = useState('');
+  const [twoFactorSetup, setTwoFactorSetup] =
+    useState<TwoFactorSetupBackend | null>(null);
+  const [twoFactorSetupCode, setTwoFactorSetupCode] = useState('');
+  const [twoFactorBusy, setTwoFactorBusy] =
+    useState<'' | 'setup' | 'confirm' | 'disable'>('');
 
   const profileAvatar =
     profileForm.avatarUrl ||
@@ -4171,9 +4376,9 @@ const AdminSettingsView: React.FC<{
     });
     setPreferencesForm({
       language: user.preferences?.language || resolveStaticUiLang(lang),
-      theme:
-        user.preferences?.theme ||
-        (localStorage.getItem('theme') === 'dark' ? 'dark' : 'light'),
+      theme: user.preferences?.theme
+        ? normalizeThemePreference(user.preferences.theme)
+        : themePreference,
       timezone: user.preferences?.timezone || 'Africa/Tunis',
       dateFormat: user.preferences?.dateFormat || 'DD/MM/YYYY',
       notifications: {
@@ -4184,7 +4389,7 @@ const AdminSettingsView: React.FC<{
       },
     });
     setVerificationEmail(user.pendingEmail || user.email);
-  }, [user, lang]);
+  }, [user, lang, themePreference]);
 
   useEffect(() => {
     if (!canEditCompanySettings || !companyId) return;
@@ -4209,20 +4414,15 @@ const AdminSettingsView: React.FC<{
     void loadActivity();
   }, []);
 
+  useEffect(() => {
+    if (user.twoFactorEnabled) {
+      setTwoFactorSetup(null);
+      setTwoFactorSetupCode('');
+    }
+  }, [user.id, user.twoFactorEnabled]);
+
   const applyThemePreference = (theme: UserPreferences['theme']) => {
-    if (theme === 'dark') {
-      setIsDarkMode(true);
-      return;
-    }
-    if (theme === 'light') {
-      setIsDarkMode(false);
-      return;
-    }
-    const prefersDark =
-      typeof window !== 'undefined' &&
-      window.matchMedia &&
-      window.matchMedia('(prefers-color-scheme: dark)').matches;
-    setIsDarkMode(prefersDark);
+    setThemePreference(normalizeThemePreference(theme));
   };
 
   const handleSaveProfile = async () => {
@@ -4363,6 +4563,75 @@ const AdminSettingsView: React.FC<{
     }
   };
 
+  const handleBeginTwoFactorSetup = async () => {
+    setTwoFactorBusy('setup');
+    setError('');
+    setSuccess('');
+    try {
+      const setup = await RealAPI.beginTwoFactorSetup();
+      setTwoFactorSetup(setup);
+      setTwoFactorSetupCode('');
+      setSuccess(
+        'Scan the QR code with your authenticator app, then enter the 6-digit code to finish setup.',
+      );
+    } catch (err) {
+      const { message, solution } = getErrorMessage(err);
+      setError(message);
+      setErrorSolution(solution);
+    } finally {
+      setTwoFactorBusy('');
+    }
+  };
+
+  const handleConfirmTwoFactorSetup = async () => {
+    if (!twoFactorSetup) return;
+    if (normalizeVerificationCode(twoFactorSetupCode).length !== 6) {
+      setError('Enter the 6-digit code from your authenticator app.');
+      setErrorSolution(undefined);
+      return;
+    }
+
+    setTwoFactorBusy('confirm');
+    setError('');
+    setSuccess('');
+    try {
+      const result = await RealAPI.completeTwoFactorSetup(
+        normalizeVerificationCode(twoFactorSetupCode),
+      );
+      await refreshCurrentUser(result.user);
+      await loadActivity();
+      setTwoFactorSetup(null);
+      setTwoFactorSetupCode('');
+      setSuccess(result.message);
+    } catch (err) {
+      const { message, solution } = getErrorMessage(err);
+      setError(message);
+      setErrorSolution(solution);
+    } finally {
+      setTwoFactorBusy('');
+    }
+  };
+
+  const handleDisableTwoFactor = async () => {
+    setTwoFactorBusy('disable');
+    setError('');
+    setSuccess('');
+    try {
+      const result = await RealAPI.disableTwoFactor();
+      await refreshCurrentUser(result.user);
+      await loadActivity();
+      setTwoFactorSetup(null);
+      setTwoFactorSetupCode('');
+      setSuccess(result.message);
+    } catch (err) {
+      const { message, solution } = getErrorMessage(err);
+      setError(message);
+      setErrorSolution(solution);
+    } finally {
+      setTwoFactorBusy('');
+    }
+  };
+
   const notificationOptions: Array<{
     key: keyof NonNullable<UserPreferences['notifications']>;
     label: string;
@@ -4428,6 +4697,9 @@ const AdminSettingsView: React.FC<{
                   </Badge>
                   <Badge variant={roleBadgeVariant(user.companyRole || String(user.role))}>
                     {user.companyRole ? roleJobLabel(user.companyRole, lang) : user.role}
+                  </Badge>
+                  <Badge variant={user.twoFactorEnabled ? 'success' : 'default'}>
+                    {user.twoFactorEnabled ? 'Authenticator app 2FA enabled' : 'Authenticator app 2FA off'}
                   </Badge>
                 </div>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -4521,7 +4793,6 @@ const AdminSettingsView: React.FC<{
                   options={[
                     { value: 'light', label: 'Light' },
                     { value: 'dark', label: 'Dark' },
-                    { value: 'system', label: 'System' },
                   ]}
                 />
                 <SelectField
@@ -4649,6 +4920,143 @@ const AdminSettingsView: React.FC<{
           <Card className="p-6">
             <div className="space-y-5">
               <div>
+                <h3 className="text-lg font-bold text-gray-900 dark:text-white">Authenticator App 2FA</h3>
+                <p className="text-sm text-gray-500">
+                  Protect this account with a TOTP authenticator app such as Google Authenticator, Microsoft Authenticator, Authy, or 1Password.
+                </p>
+              </div>
+
+              <div className="flex flex-wrap gap-2">
+                <Badge variant={user.twoFactorEnabled ? 'success' : 'warning'}>
+                  {user.twoFactorEnabled ? 'Enabled' : 'Disabled'}
+                </Badge>
+                <Badge variant="info">
+                  6-digit rotating codes
+                </Badge>
+                {twoFactorSetup ? <Badge variant="warning">Setup in progress</Badge> : null}
+              </div>
+
+              <div className="rounded-2xl bg-gray-50 dark:bg-gray-800/60 border border-gray-100 dark:border-gray-800 p-4 space-y-2 text-sm">
+                <p className="text-gray-700 dark:text-gray-300">
+                  {user.twoFactorEnabled
+                    ? 'Password login will pause for a 6-digit authenticator code before access is granted.'
+                    : 'Once enabled, you will enter your password first and then confirm with the current 6-digit code from your authenticator app.'}
+                </p>
+                <p className="text-xs text-gray-500">
+                  Scan the QR code in your authenticator app, then enter the current code to finish setup.
+                </p>
+                {user.twoFactorEnrolledAt ? (
+                  <p className="text-xs text-gray-500">
+                    Enrolled: {formatDateTime(user.twoFactorEnrolledAt, lang)}
+                  </p>
+                ) : null}
+                {user.twoFactorLastVerifiedAt ? (
+                  <p className="text-xs text-gray-500">
+                    Last 2FA sign-in: {formatDateTime(user.twoFactorLastVerifiedAt, lang)}
+                  </p>
+                ) : null}
+              </div>
+
+              <div className="flex flex-wrap gap-2">
+                {user.twoFactorEnabled ? (
+                  <PrimaryButton
+                    onClick={() => void handleDisableTwoFactor()}
+                    loading={twoFactorBusy === 'disable'}
+                    variant="danger"
+                    className="px-4 py-2.5 text-sm"
+                  >
+                    <ShieldCheck size={14} /> Disable authenticator app 2FA
+                  </PrimaryButton>
+                ) : (
+                  <PrimaryButton
+                    onClick={() => void handleBeginTwoFactorSetup()}
+                    loading={twoFactorBusy === 'setup'}
+                    className="px-4 py-2.5 text-sm"
+                  >
+                    <ShieldCheck size={14} /> Set up authenticator app
+                  </PrimaryButton>
+                )}
+              </div>
+
+              {!user.twoFactorEnabled && twoFactorSetup ? (
+                <div className="rounded-2xl border border-gray-200 dark:border-gray-800 p-4 space-y-4">
+                  <div className="flex flex-col gap-4 md:flex-row md:items-start">
+                    <div className="w-full md:w-56 shrink-0">
+                      <img
+                        src={twoFactorSetup.qrCodeDataUrl}
+                        alt="Authenticator app QR code"
+                        className="w-full max-w-[220px] rounded-2xl border border-gray-200 dark:border-gray-800 bg-white p-3"
+                      />
+                    </div>
+                    <div className="space-y-3 min-w-0">
+                      <div>
+                        <p className="font-semibold text-sm text-gray-900 dark:text-white">
+                          1. Scan this QR code with your authenticator app
+                        </p>
+                        <p className="text-sm text-gray-500">
+                          If you cannot scan it, enter the manual key below in your authenticator app instead.
+                        </p>
+                      </div>
+                      <div className="rounded-xl bg-gray-50 dark:bg-gray-800/60 border border-gray-100 dark:border-gray-800 p-3 space-y-1">
+                        <p className="text-[11px] font-semibold uppercase tracking-wider text-gray-500">
+                          Manual setup key
+                        </p>
+                        <p className="font-mono text-sm text-gray-900 dark:text-white break-all">
+                          {twoFactorSetup.manualEntryKey}
+                        </p>
+                        <p className="text-xs text-gray-500">
+                          Issuer: {twoFactorSetup.issuer} • Account: {twoFactorSetup.accountLabel}
+                        </p>
+                      </div>
+                      <p className="text-xs text-gray-500">
+                        This QR code expires {formatDateTime(twoFactorSetup.expiresAt, lang)}.
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="space-y-3 border-t border-gray-100 dark:border-gray-800 pt-4">
+                    <p className="font-semibold text-sm text-gray-900 dark:text-white">
+                      2. Enter the current 6-digit code to enable 2FA
+                    </p>
+                    <InputField
+                      label="Authenticator code"
+                      type="text"
+                      value={twoFactorSetupCode}
+                      onChange={(value) => setTwoFactorSetupCode(normalizeVerificationCode(value))}
+                      placeholder="123456"
+                      icon={<Hash size={16} />}
+                    />
+                    <div className="flex flex-wrap gap-2">
+                      <PrimaryButton
+                        onClick={() => void handleConfirmTwoFactorSetup()}
+                        loading={twoFactorBusy === 'confirm'}
+                        className="px-4 py-2.5 text-sm"
+                      >
+                        <ShieldCheck size={14} /> Verify and enable
+                      </PrimaryButton>
+                      <PrimaryButton
+                        onClick={() => {
+                          setTwoFactorSetup(null);
+                          setTwoFactorSetupCode('');
+                          setSuccess('');
+                          setError('');
+                          setErrorSolution(undefined);
+                        }}
+                        variant="outline"
+                        className="px-4 py-2.5 text-sm"
+                      >
+                        <X size={14} /> Cancel setup
+                      </PrimaryButton>
+                    </div>
+                  </div>
+                </div>
+              ) : null}
+            </div>
+          </Card>
+
+          <Card className="p-6">
+            <div className="space-y-5">
+              <div>
                 <h3 className="text-lg font-bold text-gray-900 dark:text-white">Email verification</h3>
                 <p className="text-sm text-gray-500">
                   Request a code, optionally test a new email address, and confirm the verification flow from inside the platform.
@@ -4752,12 +5160,12 @@ const AdminSettingsView: React.FC<{
                   <div key={item.id} className="rounded-xl bg-gray-50 dark:bg-gray-800/50 px-4 py-3">
                     <div className="flex items-center justify-between gap-3">
                       <p className="font-semibold text-sm text-gray-900 dark:text-white">
-                        {item.action}
+                        {formatActivitySentence(item.action, item.entityType, item.entityId)}
                       </p>
                       <p className="text-xs text-gray-400">{formatDateTime(item.createdAt, lang)}</p>
                     </div>
                     <p className="text-xs text-gray-500 mt-1">
-                      {item.entityType} • {item.entityId}
+                      {formatActivityContext(item.entityType, item.entityId)}
                     </p>
                   </div>
                 ))}

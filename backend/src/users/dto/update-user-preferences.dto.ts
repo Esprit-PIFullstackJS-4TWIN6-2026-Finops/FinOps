@@ -31,8 +31,8 @@ export class UpdateUserPreferencesDto {
   language?: string;
 
   @IsOptional()
-  @IsIn(['light', 'dark', 'system'])
-  theme?: 'light' | 'dark' | 'system';
+  @IsIn(['light', 'dark'])
+  theme?: 'light' | 'dark';
 
   @IsOptional()
   @IsString()
