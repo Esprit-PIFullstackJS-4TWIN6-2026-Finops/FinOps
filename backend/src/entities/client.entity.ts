@@ -27,6 +27,10 @@ export class Client {
   @Column({ nullable: true })
   phone?: string;
 
+  /** Invoice Ninja client hash id when synced. */
+  @Column({ name: 'ninja_client_id', nullable: true })
+  ninjaClientId?: string;
+
   @Column({ name: 'company_name', nullable: true })
   companyName?: string;
 

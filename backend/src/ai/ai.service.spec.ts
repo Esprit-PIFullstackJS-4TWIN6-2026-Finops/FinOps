@@ -56,4 +56,22 @@ describe('AiService', () => {
     });
     expect(category).toBe('Cloud');
   });
+
+  it('answers structured French FinOps intents without Gemini', async () => {
+    const anomalies = await service.chat('company-1', {
+      message: 'Quelles sont les anomalies de dépenses sur les 6 derniers mois ?',
+    });
+    expect(anomalies.answer.length).toBeGreaterThan(20);
+    expect(anomalies.followUps.length).toBeGreaterThan(0);
+
+    const forecast = await service.chat('company-1', {
+      message: 'Fais une prévision des dépenses pour les 3 prochains mois.',
+    });
+    expect(forecast.answer).toMatch(/prévision|Prévision|M\+|mois/i);
+
+    const plan = await service.chat('company-1', {
+      message: "Propose un plan d'optimisation des coûts (priorité haute d'abord).",
+    });
+    expect(plan.answer).toMatch(/optimisation|priorité|Haute/i);
+  });
 });

@@ -35,7 +35,8 @@ export interface TranslateResult {
 
 export class BatchTranslateDto {
   @ArrayNotEmpty()
-  @ArrayMaxSize(400)
+  /** UI i18n dépasse 400 clés — laisser de la marge pour toutes les langues dynamiques. */
+  @ArrayMaxSize(5000)
   @IsString({ each: true })
   @MaxLength(5000, { each: true })
   texts!: string[];

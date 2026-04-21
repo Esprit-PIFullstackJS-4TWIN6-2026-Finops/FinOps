@@ -60,6 +60,20 @@ export class ForecastDto {
   historyMonths?: number = 12;
 }
 
+export class CashFlowCopilotDto {
+  @IsOptional()
+  @IsInt()
+  @Min(3)
+  @Max(36)
+  historyMonths?: number = 12;
+
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  @Max(12)
+  horizonMonths?: number = 3;
+}
+
 export class ChatDto {
   @IsString()
   @IsNotEmpty()
@@ -97,6 +111,38 @@ export interface ForecastResult {
   growthTrend: 'increasing' | 'stable' | 'decreasing';
   confidence: number;
   timeline: ForecastPoint[];
+  generatedAt: string;
+}
+
+export interface CashFlowCopilotPoint {
+  period: string;
+  projectedInflows: number;
+  projectedOutflows: number;
+  netCashFlow: number;
+  endingCash: number;
+}
+
+export interface CashFlowCopilotDriver {
+  label: string;
+  impact: number;
+  direction: 'positive' | 'negative';
+}
+
+export interface CashFlowCopilotAction {
+  title: string;
+  detail: string;
+  priority: 'low' | 'medium' | 'high';
+}
+
+export interface CashFlowCopilotResult {
+  openingCashEstimate: number;
+  projectedEndingCash: number;
+  netTrend: 'improving' | 'stable' | 'deteriorating';
+  confidence: number;
+  summary: string;
+  drivers: CashFlowCopilotDriver[];
+  actions: CashFlowCopilotAction[];
+  timeline: CashFlowCopilotPoint[];
   generatedAt: string;
 }
 

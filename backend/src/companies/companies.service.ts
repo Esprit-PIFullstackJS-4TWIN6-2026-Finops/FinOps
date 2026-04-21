@@ -1,5 +1,6 @@
 import {
   Injectable,
+  Logger,
   NotFoundException,
   ForbiddenException,
   ConflictException,
@@ -23,9 +24,12 @@ import { CreateCompanyDto } from './dto/create-company.dto';
 import { CreateCompanyJoinRequestDto } from './dto/create-company-join-request.dto';
 import { MembershipsService } from '../memberships/memberships.service';
 import { NotificationsService } from '../notifications/notifications.service';
+import { InvoiceNinjaService } from '../invoice-ninja/invoice-ninja.service';
 
 @Injectable()
 export class CompaniesService {
+  private readonly logger = new Logger(CompaniesService.name);
+
   constructor(
     @InjectRepository(Company)
     private companyRepo: Repository<Company>,
@@ -38,6 +42,7 @@ export class CompaniesService {
     private emailValidator: EmailValidatorService,
     private membershipsService: MembershipsService,
     private notificationsService: NotificationsService,
+    private readonly ninja: InvoiceNinjaService,
   ) {}
 
   async findById(id: string): Promise<Company> {
@@ -130,6 +135,29 @@ export class CompaniesService {
       UserRole.OWNER,
       false,
     );
+    if (this.ninja.isConfigured() && !savedCompany.ninjaClientId) {
+      try {
+        const owner = await this.userRepo.findOne({ where: { id: userId } });
+        const ninjaHeader = savedCompany.invoiceNinjaCompanyId?.trim() || undefined;
+        const { id } = await this.ninja.createClient(
+          {
+            name: savedCompany.name,
+            contacts: [
+              {
+                first_name: savedCompany.name.slice(0, 120),
+                email: owner?.email,
+                phone: savedCompany.phone,
+              },
+            ],
+          },
+          ninjaHeader,
+        );
+        savedCompany.ninjaClientId = id;
+        await this.companyRepo.save(savedCompany);
+      } catch (e) {
+        this.logger.warn(`Invoice Ninja company sync failed for ${savedCompany.id}: ${e}`);
+      }
+    }
     return savedCompany;
   }
 
@@ -172,8 +200,23 @@ export class CompaniesService {
       }
     }
 
-    Object.assign(company, dto);
+    const { invoiceNinjaCompanyId, ...companyFields } = dto;
+    Object.assign(company, companyFields);
+    if (invoiceNinjaCompanyId !== undefined) {
+      const v = invoiceNinjaCompanyId.trim();
+      company.invoiceNinjaCompanyId = v.length ? v : undefined;
+    }
     return this.companyRepo.save(company);
+  }
+
+  /** Entreprises Invoice Ninja disponibles pour le sélecteur (token API). */
+  async listInvoiceNinjaCompanies(userId: string): Promise<
+    { id: string; name: string; subdomain?: string }[]
+  > {
+    const user = await this.userRepo.findOne({ where: { id: userId } });
+    if (!user) throw new NotFoundException('Utilisateur non trouvé');
+    if (!this.ninja.isConfigured()) return [];
+    return this.ninja.listNinjaCompanies();
   }
 
   async getEmployees(companyId: string, userId: string): Promise<User[]> {
@@ -189,7 +232,15 @@ export class CompaniesService {
     companyId: string,
     userId: string,
     dto: CreateEmployeeDto,
-  ): Promise<{ user: Partial<User>; tempPassword: string; emailSent: boolean; previewUrl?: string; role: string }> {
+  ): Promise<{
+    user: Partial<User>;
+    tempPassword: string;
+    emailSent: boolean;
+    previewUrl?: string;
+    role: string;
+    mailProvider: 'gmail' | 'smtp' | 'ethereal' | 'console';
+    mailConfigured: boolean;
+  }> {
     const company = await this.findById(companyId);
     await this.ensureUserCanManageCompany(userId, companyId);
 
@@ -257,7 +308,15 @@ export class CompaniesService {
     console.log('═══════════════════════════════════════════');
 
     const { passwordHash, ...safeUser } = user;
-    return { user: safeUser, tempPassword, emailSent: emailResult.sent, previewUrl: emailResult.previewUrl, role: roleLabel };
+    return {
+      user: safeUser,
+      tempPassword,
+      emailSent: emailResult.sent,
+      previewUrl: emailResult.previewUrl,
+      role: roleLabel,
+      mailProvider: emailResult.provider,
+      mailConfigured: this.mailService.isDeliveryReady(),
+    };
   }
 
   async discoverCompanies(userId: string): Promise<Company[]> {

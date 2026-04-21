@@ -44,7 +44,8 @@ export class Expense {
   @JoinColumn({ name: 'company_id' })
   company: Company;
 
-  @ManyToOne(() => User, { onDelete: 'RESTRICT' })
+  /** FK DB désactivée : évite l'échec de synchronize si des lignes ont un created_by orphelin (dev / données importées). */
+  @ManyToOne(() => User, { onDelete: 'RESTRICT', createForeignKeyConstraints: false })
   @JoinColumn({ name: 'created_by' })
   author: User;
 }

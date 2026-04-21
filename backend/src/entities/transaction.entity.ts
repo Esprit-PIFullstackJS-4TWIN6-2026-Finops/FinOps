@@ -54,7 +54,7 @@ export class Transaction {
   @JoinColumn({ name: 'company_id' })
   company: Company;
 
-  @ManyToOne(() => User, { onDelete: 'RESTRICT' })
+  @ManyToOne(() => User, { onDelete: 'RESTRICT', createForeignKeyConstraints: false })
   @JoinColumn({ name: 'created_by' })
   author: User;
 }

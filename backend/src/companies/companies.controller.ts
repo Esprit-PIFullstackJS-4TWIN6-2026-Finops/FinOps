@@ -54,6 +54,19 @@ export class CompaniesController {
     return this.companiesService.discoverCompanies(userId);
   }
 
+  @Get('invoice-ninja/options')
+  @UseGuards(RolesGuard)
+  @Roles(
+    UserRole.PLATFORM_ADMIN,
+    UserRole.OWNER,
+    UserRole.MANAGER,
+    UserRole.EMPLOYEE,
+    UserRole.ACCOUNTANT,
+  )
+  async invoiceNinjaCompanyOptions(@CurrentUser('id') userId: string) {
+    return this.companiesService.listInvoiceNinjaCompanies(userId);
+  }
+
   @Get('join-requests/mine')
   @UseGuards(RolesGuard)
   @Roles(

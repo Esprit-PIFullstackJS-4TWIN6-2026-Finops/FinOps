@@ -4,6 +4,14 @@
 
 import type { AuditLog, Client, Invoice, UserPreferences } from './types';
 
+/** Dispatched after invoices, expenses or clients change so the dashboard can refetch. */
+export const FINOPS_DATA_CHANGED_EVENT = 'finops-data-changed';
+
+export function notifyFinopsDataChanged(): void {
+  if (typeof window === 'undefined') return;
+  window.dispatchEvent(new CustomEvent(FINOPS_DATA_CHANGED_EVENT));
+}
+
 const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:3000';
 
 function getToken(): string | null {
@@ -49,7 +57,8 @@ async function fetchWithAuth(
   };
   const isFormData =
     typeof FormData !== 'undefined' && options.body instanceof FormData;
-  if (!isFormData && !headers['Content-Type']) {
+  const hasBody = options.body !== undefined && options.body !== null;
+  if (hasBody && !isFormData && !headers['Content-Type']) {
     headers['Content-Type'] = 'application/json';
   }
   if (token) headers['Authorization'] = `Bearer ${token}`;
@@ -70,7 +79,19 @@ async function fetchBlob(
   path: string,
   options: RequestInit = {}
 ): Promise<Blob> {
-  const res = await fetchWithAuth(path, options);
+  const headers = {
+    ...(options.headers as Record<string, string>),
+  };
+  if (!headers['Accept']) {
+    headers['Accept'] = 'application/pdf';
+  }
+
+  console.log('fetchBlob called with path:', path, 'headers:', headers);
+  const res = await fetchWithAuth(path, {
+    ...options,
+    headers,
+  });
+  console.log('fetchBlob response status:', res.status, 'ok:', res.ok);
   if (!res.ok) {
     const text = await res.text().catch(() => '');
     throw new Error(`${res.status}:${text || res.statusText || 'Erreur'}`);
@@ -288,6 +309,94 @@ export interface AiForecastResponse {
   generatedAt: string;
 }
 
+export interface AiCashFlowCopilotPointResponse {
+  period: string;
+  projectedInflows: number;
+  projectedOutflows: number;
+  netCashFlow: number;
+  endingCash: number;
+}
+
+export interface AiCashFlowCopilotResponse {
+  openingCashEstimate: number;
+  projectedEndingCash: number;
+  netTrend: 'improving' | 'stable' | 'deteriorating';
+  confidence: number;
+  summary: string;
+  drivers: Array<{
+    label: string;
+    impact: number;
+    direction: 'positive' | 'negative';
+  }>;
+  actions: Array<{
+    title: string;
+    detail: string;
+    priority: 'low' | 'medium' | 'high';
+  }>;
+  timeline: AiCashFlowCopilotPointResponse[];
+  generatedAt: string;
+}
+
+export interface AiSmartDocumentLineItemResponse {
+  description: string;
+  quantity: number;
+  unitPrice: number;
+  lineTotal: number;
+}
+
+export interface AiSmartDocumentIntakeResponse {
+  detectedType: 'invoice' | 'receipt';
+  suggestedAction: 'create_invoice' | 'create_expense';
+  confidenceScore: number;
+  summary: string;
+  warnings: string[];
+  missingFields: string[];
+  blockingFields: string[];
+  normalizedTextPreview: string;
+  invoiceDraft?: {
+    number: string;
+    clientName: string;
+    clientEmail?: string;
+    date: string;
+    dueDate: string;
+    total: number;
+    status: 'Draft';
+    notes?: string;
+    lineItems: AiSmartDocumentLineItemResponse[];
+  };
+  expenseDraft?: {
+    amount: number;
+    expenseDate: string;
+    category: string;
+    vendor?: string;
+    notes?: string;
+  };
+  generatedAt: string;
+}
+
+export interface AiExpenseForecastResponse {
+  companyId: string;
+  category?: string;
+  predictedAmount: number;
+  confidenceScore: number;
+  trend: 'increasing' | 'stable' | 'decreasing';
+  explanation: string;
+  generatedAt: string;
+}
+
+export interface AiExpenseAlertResponse {
+  expenseId: string;
+  alertLevel: 'low' | 'medium' | 'high' | 'critical';
+  riskScore: number;
+  reason: string;
+  recommendation: string;
+  amount: number;
+  category: string;
+  vendor?: string;
+  expenseDate: string;
+  detectedAt: string;
+}
+
 export interface AiChatResponse {
   answer: string;
   followUps: string[];
@@ -333,10 +442,46 @@ export interface InvoiceBackend {
   number: string;
   clientName: string;
   clientEmail?: string;
+  clientId?: string;
+  linkedClient?: {
+    id: string;
+    name: string;
+    email?: string;
+    companyName?: string;
+  };
   date: string;
   dueDate: string;
   total: number | string;
   status: string;
+}
+
+export interface InvoicePaymentSuggestionBackend {
+  invoiceId: string;
+  recommendationType: string;
+  numberOfChunks: number;
+  chunkAmounts: number[];
+  proposedDates: string[];
+  confidenceScore: number;
+  suggestedTerms?: string;
+  explanation?: string;
+}
+
+export interface DashboardMonthlyBackend {
+  period: string;
+  revenue: number;
+  expenses: number;
+}
+
+export interface DashboardSummaryBackend {
+  invoicedTotal: number;
+  paidTotal: number;
+  outstandingTotal: number;
+  expenseTotal: number;
+  netPaidMinusExpenses: number;
+  invoiceCount: number;
+  expenseCount: number;
+  clientCount: number;
+  monthly: DashboardMonthlyBackend[];
 }
 
 export interface ClientRowBackend {
@@ -643,6 +788,8 @@ export const BackendAPI = {
       credentials: { email: string; tempPassword: string; role: string; companyName: string };
       emailSent: boolean;
       previewUrl?: string;
+      mailProvider: 'gmail' | 'smtp' | 'ethereal' | 'console';
+      mailConfigured: boolean;
     }>(`/admin/registration-requests/${id}/accept`, {
       method: 'POST',
     });
@@ -653,6 +800,8 @@ export const BackendAPI = {
       message: string;
       emailSent: boolean;
       previewUrl?: string;
+      mailProvider: 'gmail' | 'smtp' | 'ethereal' | 'console';
+      mailConfigured: boolean;
       rejectedUser: { email: string; name: string; reason: string };
     }>(
       `/admin/registration-requests/${id}/reject`,
@@ -684,6 +833,8 @@ export const BackendAPI = {
       credentials: { email: string; tempPassword: string; role: string; companyName: string };
       emailSent: boolean;
       previewUrl?: string;
+      mailProvider: 'gmail' | 'smtp' | 'ethereal' | 'console';
+      mailConfigured: boolean;
     }>(`/admin/employee-access-requests/${id}/accept`, {
       method: 'POST',
     });
@@ -694,6 +845,8 @@ export const BackendAPI = {
       message: string;
       emailSent: boolean;
       previewUrl?: string;
+      mailProvider: 'gmail' | 'smtp' | 'ethereal' | 'console';
+      mailConfigured: boolean;
       rejectedUser: { email: string; name: string; reason: string };
     }>(
       `/admin/employee-access-requests/${id}/reject`,
@@ -756,6 +909,8 @@ export const BackendAPI = {
       emailSent: boolean;
       previewUrl?: string;
       role: string;
+      mailProvider: 'gmail' | 'smtp' | 'ethereal' | 'console';
+      mailConfigured: boolean;
     }>(`/companies/${companyId}/employees`, {
       method: 'POST',
       body: JSON.stringify(data),
@@ -831,6 +986,30 @@ export const BackendAPI = {
     });
   },
 
+  async getExpense(id: string) {
+    return fetchApi<ExpenseBackend>(`/expenses/${id}`);
+  },
+
+  async updateExpense(
+    id: string,
+    data: {
+      amount?: number;
+      expenseDate?: string;
+      category?: string;
+      vendor?: string;
+      notes?: string;
+    },
+  ) {
+    return fetchApi<ExpenseBackend>(`/expenses/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify(data),
+    });
+  },
+
+  async deleteExpense(id: string) {
+    return fetchApi<{ deleted: true }>(`/expenses/${id}`, { method: 'DELETE' });
+  },
+
   async translate(payload: TranslatePayload) {
     return fetchApi<TranslateResponse>('/ai/translate', {
       method: 'POST',
@@ -839,10 +1018,29 @@ export const BackendAPI = {
   },
 
   async translateBatch(payload: BatchTranslatePayload) {
-    return fetchApi<BatchTranslateResponse>('/ai/translate/batch', {
-      method: 'POST',
-      body: JSON.stringify(payload),
-    });
+    const { texts, source_lang, target_lang } = payload;
+    const CHUNK = 280;
+    if (texts.length <= CHUNK) {
+      return fetchApi<BatchTranslateResponse>('/ai/translate/batch', {
+        method: 'POST',
+        body: JSON.stringify(payload),
+      });
+    }
+    const translations: string[] = [];
+    let model_name = 'nllb';
+    for (let i = 0; i < texts.length; i += CHUNK) {
+      const slice = texts.slice(i, i + CHUNK);
+      const part = await fetchApi<BatchTranslateResponse>('/ai/translate/batch', {
+        method: 'POST',
+        body: JSON.stringify({ texts: slice, source_lang, target_lang }),
+      });
+      const tr = Array.isArray(part.translations) ? part.translations : [];
+      for (let j = 0; j < slice.length; j += 1) {
+        translations.push(tr[j] != null && String(tr[j]).trim() !== '' ? String(tr[j]) : slice[j]);
+      }
+      if (part.model_name) model_name = part.model_name;
+    }
+    return { translations, source_lang, target_lang, model_name };
   },
 
   async getTranslationLanguages() {
@@ -861,6 +1059,40 @@ export const BackendAPI = {
       method: 'POST',
       body: JSON.stringify(payload),
     });
+  },
+
+  async cashFlowCopilot(payload: { historyMonths?: number; horizonMonths?: number } = {}) {
+    return fetchApi<AiCashFlowCopilotResponse>('/ai/cash-flow-copilot', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  },
+
+  async smartDocumentIntake(payload: {
+    sourceText: string;
+    documentType?: 'auto' | 'invoice' | 'receipt';
+  }) {
+    return fetchApi<AiSmartDocumentIntakeResponse>('/ai/smart-intake', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  },
+
+  async getExpenseForecast(payload: { companyId: string; category?: string; periodMonths?: number } = { companyId: '' }) {
+    const params = new URLSearchParams();
+    params.append('companyId', payload.companyId);
+    if (payload.category) params.append('category', payload.category);
+    if (payload.periodMonths) params.append('periodMonths', payload.periodMonths.toString());
+
+    return fetchApi<AiExpenseForecastResponse>(`/ai/forecasting?${params.toString()}`);
+  },
+
+  async getExpenseAlerts(payload: { companyId: string; category?: string } = { companyId: '' }) {
+    const params = new URLSearchParams();
+    params.append('companyId', payload.companyId);
+    if (payload.category) params.append('category', payload.category);
+
+    return fetchApi<AiExpenseAlertResponse[]>(`/ai/alerts?${params.toString()}`);
   },
 
   async chat(payload: { message: string }) {
@@ -884,23 +1116,71 @@ export const BackendAPI = {
     });
   },
 
+  async getDashboardSummary() {
+    return fetchApi<DashboardSummaryBackend>('/dashboard/summary');
+  },
+
   async getInvoices() {
     return fetchApi<InvoiceBackend[]>('/invoices');
   },
 
   async createInvoice(data: {
     number: string;
-    clientName: string;
+    clientName?: string;
+    clientId?: string;
     clientEmail?: string;
     date: string;
     dueDate: string;
     total: number;
     status?: 'Draft' | 'Sent' | 'Paid' | 'Overdue';
+    lineItems?: Array<{
+      productKey: string;
+      notes?: string;
+      quantity: number;
+      cost: number;
+    }>;
   }) {
     return fetchApi<InvoiceBackend>('/invoices', {
       method: 'POST',
       body: JSON.stringify(data),
     });
+  },
+
+  async getInvoice(id: string) {
+    return fetchApi<InvoiceBackend>(`/invoices/${id}`);
+  },
+
+  async downloadInvoicePdf(id: string) {
+    return fetchBlob(`/invoices/${id}/export-pdf`, {
+      method: 'GET',
+    });
+  },
+
+  async getInvoicePaymentSuggestion(id: string) {
+    return fetchApi<InvoicePaymentSuggestionBackend>(`/invoices/${id}/payment-suggestion`);
+  },
+
+  async updateInvoice(
+    id: string,
+    data: {
+      number?: string;
+      clientName?: string;
+      clientId?: string | null;
+      clientEmail?: string;
+      date?: string;
+      dueDate?: string;
+      total?: number;
+      status?: 'Draft' | 'Sent' | 'Paid' | 'Overdue';
+    },
+  ) {
+    return fetchApi<InvoiceBackend>(`/invoices/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify(data),
+    });
+  },
+
+  async deleteInvoice(id: string) {
+    return fetchApi<{ deleted: true }>(`/invoices/${id}`, { method: 'DELETE' });
   },
 
   async payInvoice(id: string) {
@@ -925,6 +1205,29 @@ export const BackendAPI = {
     });
   },
 
+  async getClient(id: string) {
+    return fetchApi<ClientRowBackend>(`/clients/${id}`);
+  },
+
+  async updateClient(
+    id: string,
+    data: {
+      name?: string;
+      email?: string;
+      phone?: string;
+      companyName?: string;
+    },
+  ) {
+    return fetchApi<ClientRowBackend>(`/clients/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify(data),
+    });
+  },
+
+  async deleteClient(id: string) {
+    return fetchApi<{ deleted: true }>(`/clients/${id}`, { method: 'DELETE' });
+  },
+
   async getActivityLogs() {
     return fetchApi<ActivityLogRowBackend[]>('/activity-logs');
   },
@@ -937,6 +1240,8 @@ export function invoiceFromBackend(row: InvoiceBackend): Invoice {
     id: row.id,
     number: row.number,
     clientName: row.clientName,
+    clientEmail: row.clientEmail,
+    clientId: row.clientId ?? row.linkedClient?.id,
     date: d.slice(0, 10),
     dueDate: due.slice(0, 10),
     total: Number(row.total),
@@ -1153,6 +1458,8 @@ export function formatActivitySentence(
       if (first === 'languages') return 'Loaded available languages.';
       if (first === 'analyze-expenses') return 'Analyzed expenses with AI.';
       if (first === 'forecast') return 'Generated a financial forecast.';
+      if (first === 'cash-flow-copilot') return 'Generated a cash-flow copilot forecast.';
+      if (first === 'smart-intake') return 'Used AI smart invoice and receipt intake.';
       if (first === 'chat') return 'Used the AI assistant.';
       if (first === 'optimize-costs') return 'Generated cost optimization suggestions.';
       if (first === 'report' && second === 'monthly') return 'Generated a monthly AI report.';

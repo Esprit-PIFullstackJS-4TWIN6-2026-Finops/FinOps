@@ -1,5 +1,10 @@
 import { Injectable, OnModuleInit } from '@nestjs/common';
 import * as nodemailer from 'nodemailer';
+import {
+  isGmailAppPasswordPlaceholder,
+  isValidGoogleAppPasswordFormat,
+  normalizeGmailAppPassword,
+} from './gmail-env.util';
 
 export interface MailOptions {
   to: string;
@@ -20,20 +25,48 @@ export class MailService implements OnModuleInit {
   private ready = false;
   private provider: 'gmail' | 'smtp' | 'ethereal' | 'console' = 'console';
 
+  /** True when SMTP was verified and real sends are attempted (not console-only fallback). */
+  isDeliveryReady(): boolean {
+    return this.ready;
+  }
+
   async onModuleInit() {
     const gmailUser = process.env.GMAIL_USER?.trim();
-    const gmailAppPassword = process.env.GMAIL_APP_PASSWORD?.replace(/\s+/g, '');
+    const gmailAppPasswordRaw = process.env.GMAIL_APP_PASSWORD;
+    const gmailAppPassword = normalizeGmailAppPassword(gmailAppPasswordRaw);
     const gmailRequested = !!(gmailUser || gmailAppPassword);
+    const wantsGmail =
+      (process.env.MAIL_PROVIDER || '').toLowerCase() === 'gmail' || !!gmailUser;
 
     if (gmailUser && !gmailAppPassword) {
       this.ready = false;
       this.provider = 'console';
-      console.warn('⚠ Gmail configure partiellement: GMAIL_APP_PASSWORD est manquant.');
-      console.warn('⚠ Generez un App Password Google et ajoutez-le dans backend/.env.');
+      console.error(
+        'EMAIL ERROR: GMAIL_APP_PASSWORD is missing. Use a Google App Password (16 characters), not your normal Gmail password.',
+      );
       return;
     }
 
-    // Option 1: Gmail SMTP (envoi réel vers des boites Gmail/Outlook/etc.)
+    if (wantsGmail && gmailUser && gmailAppPassword) {
+      if (isGmailAppPasswordPlaceholder(gmailAppPasswordRaw)) {
+        this.ready = false;
+        this.provider = 'console';
+        console.error(
+          'EMAIL ERROR: GMAIL_APP_PASSWORD is still a placeholder in backend/.env — replace it with a 16-character Google App Password.',
+        );
+        return;
+      }
+      if (!isValidGoogleAppPasswordFormat(gmailAppPasswordRaw)) {
+        this.ready = false;
+        this.provider = 'console';
+        console.error(
+          'EMAIL ERROR: GMAIL_APP_PASSWORD must be exactly 16 letters/numbers (Google App Password). Do not use your normal Gmail password.',
+        );
+        return;
+      }
+    }
+
+    // Gmail SMTP (real delivery)
     if (gmailUser && gmailAppPassword) {
       this.transporter = nodemailer.createTransport({
         host: 'smtp.gmail.com',
@@ -50,20 +83,15 @@ export class MailService implements OnModuleInit {
         await this.transporter.verify();
         this.ready = true;
         this.provider = 'gmail';
-        console.log('═══════════════════════════════════════════');
-        console.log('  📧 EMAIL : Gmail SMTP configuré');
-        console.log(`  User : ${gmailUser}`);
-        console.log('  Mode : envoi réel');
-        console.log('═══════════════════════════════════════════');
+        console.log('EMAIL: Gmail SMTP configured');
+        console.log(`  User: ${gmailUser}`);
         return;
       } catch (error) {
         this.ready = false;
         this.provider = 'console';
-        console.warn('⚠ Gmail SMTP non valide. Vérifiez GMAIL_USER/GMAIL_APP_PASSWORD.');
-        console.warn(error);
-        // Si l'utilisateur a demandé Gmail, ne pas basculer silencieusement vers Ethereal
+        console.error('EMAIL ERROR: invalid Gmail credentials');
+        console.error(error);
         if (gmailRequested) {
-          console.warn('⚠ Gmail requis: aucun email réel ne sera envoyé tant que la configuration Gmail est invalide.');
           return;
         }
       }
@@ -152,6 +180,9 @@ export class MailService implements OnModuleInit {
         : '"FinOps Platform" <noreply@finops.com>');
 
     if (!this.ready || !this.transporter) {
+      console.error(
+        'EMAIL ERROR: mail transport not ready — email was not sent. Fix Gmail env vars and restart the server.',
+      );
       // Fallback : afficher dans la console
       console.log('');
       console.log('┌─────────────────────────────────────────┐');
@@ -202,7 +233,8 @@ export class MailService implements OnModuleInit {
 
       return { sent: true, previewUrl: previewUrl || undefined, provider: this.provider };
     } catch (error) {
-      console.error('❌ Erreur envoi email:', error);
+      console.error('EMAIL ERROR: failed to send email');
+      console.error(error);
       return { sent: false, provider: this.provider };
     }
   }
@@ -221,7 +253,8 @@ export class MailService implements OnModuleInit {
         html: html || `<p>${text}</p>`,
       });
     } catch (error) {
-      console.error('❌ sendEmail error:', error);
+      console.error('EMAIL ERROR: sendEmail failed');
+      console.error(error);
       return { sent: false, provider: this.provider };
     }
   }
@@ -275,7 +308,7 @@ export class MailService implements OnModuleInit {
     email: string,
     ownerName: string,
     tempPassword: string,
-  ): Promise<{ sent: boolean; previewUrl?: string }> {
+  ): Promise<SendMailResult> {
     const loginUrl = process.env.APP_URL || process.env.FRONTEND_URL || 'http://localhost:5173';
     const html = `
       <div style="font-family: 'Segoe UI', Arial, sans-serif; max-width: 600px; margin: 0 auto; background: #ffffff; border-radius: 12px; overflow: hidden; border: 1px solid #e5e7eb;">
@@ -334,7 +367,7 @@ export class MailService implements OnModuleInit {
     email: string,
     ownerName: string,
     rejectionReason: string,
-  ): Promise<{ sent: boolean; previewUrl?: string }> {
+  ): Promise<SendMailResult> {
     const html = `
       <div style="font-family: 'Segoe UI', Arial, sans-serif; max-width: 600px; margin: 0 auto; background: #ffffff; border-radius: 12px; overflow: hidden; border: 1px solid #e5e7eb;">
         <div style="background: linear-gradient(135deg, #dc2626, #b91c1c); padding: 32px; text-align: center;">
@@ -366,7 +399,7 @@ export class MailService implements OnModuleInit {
     email: string,
     userName: string,
     tempPassword: string,
-  ): Promise<{ sent: boolean; previewUrl?: string; provider: SendMailResult['provider'] }> {
+  ): Promise<SendMailResult> {
     const loginUrl = process.env.APP_URL || process.env.FRONTEND_URL || 'http://localhost:5173';
     const html = `
       <div style="font-family: 'Segoe UI', Arial, sans-serif; max-width: 600px; margin: 0 auto; background: #ffffff; border-radius: 12px; overflow: hidden; border: 1px solid #e5e7eb;">
@@ -429,7 +462,7 @@ export class MailService implements OnModuleInit {
     role: string,
     companyName: string,
     tempPassword: string,
-  ): Promise<{ sent: boolean; previewUrl?: string }> {
+  ): Promise<SendMailResult> {
     const loginUrl = process.env.APP_URL || process.env.FRONTEND_URL || 'http://localhost:5173';
     const html = `
       <div style="font-family: 'Segoe UI', Arial, sans-serif; max-width: 600px; margin: 0 auto; background: #ffffff; border-radius: 12px; overflow: hidden; border: 1px solid #e5e7eb;">
@@ -494,7 +527,7 @@ export class MailService implements OnModuleInit {
       ownerEmail: string;
       phone?: string;
     },
-  ): Promise<{ sent: boolean; previewUrl?: string }> {
+  ): Promise<SendMailResult> {
     const html = `
       <div style="font-family: 'Segoe UI', Arial, sans-serif; max-width: 620px; margin: 0 auto; background: #ffffff; border-radius: 12px; overflow: hidden; border: 1px solid #e5e7eb;">
         <div style="background: linear-gradient(135deg, #1d4ed8, #2563eb); padding: 24px; text-align: center;">
@@ -530,7 +563,7 @@ export class MailService implements OnModuleInit {
       companyName: string;
       desiredRole: string;
     },
-  ): Promise<{ sent: boolean; previewUrl?: string }> {
+  ): Promise<SendMailResult> {
     const html = `
       <div style="font-family: 'Segoe UI', Arial, sans-serif; max-width: 620px; margin: 0 auto; background: #ffffff; border-radius: 12px; overflow: hidden; border: 1px solid #e5e7eb;">
         <div style="background: linear-gradient(135deg, #2563eb, #1d4ed8); padding: 24px; text-align: center;">
@@ -562,7 +595,7 @@ export class MailService implements OnModuleInit {
     fullName: string,
     companyName: string,
     rejectionReason: string,
-  ): Promise<{ sent: boolean; previewUrl?: string }> {
+  ): Promise<SendMailResult> {
     const html = `
       <div style="font-family: 'Segoe UI', Arial, sans-serif; max-width: 600px; margin: 0 auto; background: #ffffff; border-radius: 12px; overflow: hidden; border: 1px solid #e5e7eb;">
         <div style="background: linear-gradient(135deg, #dc2626, #b91c1c); padding: 32px; text-align: center;">
@@ -586,3 +619,4 @@ export class MailService implements OnModuleInit {
     });
   }
 }
+

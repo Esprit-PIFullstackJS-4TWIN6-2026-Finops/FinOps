@@ -47,4 +47,10 @@ export class UpdateCompanyDto {
   @Matches(/^[\+]?[0-9\s\-\(\)]{6,20}$/, { message: 'Numéro de téléphone invalide' })
   @Transform(({ value }) => value?.trim())
   phone?: string;
+
+  /** Hash id Invoice Ninja (GET /companies/invoice-ninja/options). Chaîne vide pour effacer. */
+  @IsOptional()
+  @IsString()
+  @MaxLength(64)
+  invoiceNinjaCompanyId?: string;
 }

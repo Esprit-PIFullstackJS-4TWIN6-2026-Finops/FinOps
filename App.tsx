@@ -1,5 +1,5 @@
 
-import React, { useState, useEffect, useMemo, useRef } from 'react';
+import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { 
   LayoutDashboard, FileText, Receipt, Users, BarChart3, Settings, 
   LogOut, Bell, Moon, Sun, Menu, X, Plus, Search, ChevronRight, 
@@ -8,7 +8,7 @@ import {
   TrendingUp, Wallet, CheckCircle2, AlertCircle, Clock, Zap, Globe,
   Sparkles, ArrowRight, BrainCircuit, Building2, Eye, EyeOff, 
   RefreshCw, ChevronDown, Mail, Hash, CircleDot, Info,
-  Crown, UserCheck, Copy, KeyRound, Trash2
+  Crown, UserCheck, Copy, KeyRound, Trash2, Pencil
 } from 'lucide-react';
 import { 
   XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, 
@@ -21,13 +21,19 @@ import {
   auditFromBackend,
   checkBackendHealth,
   clientFromBackend,
+  FINOPS_DATA_CHANGED_EVENT,
   formatActivityContext,
   formatActivitySentence,
   invoiceFromBackend,
+  notifyFinopsDataChanged,
   type AiAnalyzeExpensesResponse,
+  type AiCashFlowCopilotResponse,
+  type AiExpenseAlertResponse,
+  type AiExpenseForecastResponse,
   type AiForecastResponse,
   type AiMonthlyReportResponse,
   type AiOptimizeCostsResponse,
+  type AiSmartDocumentIntakeResponse,
   type CompanyBackend,
   type CompanyJoinRequestBackend,
   type EmailVerificationRequestResponse,
@@ -40,18 +46,17 @@ import {
   type UserListItemBackend,
   type UserRoleBackend,
   type UserStatsBackend,
+  type DashboardSummaryBackend,
 } from './api-backend';
 import { getErrorMessage } from './utils/api-errors';
 import {
   DYNAMIC_TO_STATIC_UI_LANG,
   LANGUAGES,
-  Lang,
   UiLang,
   getBaseTranslations,
   getLangDir,
   getRuntimeTranslations,
   isStaticLang,
-  resolveStaticUiLang,
   setRuntimeTranslations,
   t,
 } from './i18n';
@@ -66,6 +71,13 @@ function localeForLang(lang: UiLang): string {
   if (s.startsWith('arb') || s.includes('Arab')) return 'ar';
   if (s.startsWith('fra')) return 'fr-FR';
   return 'en-US';
+}
+
+/** Explains why a transactional email was not delivered (Gmail / SMTP). */
+function mailNotDeliveredHint(lang: UiLang, mailConfigured?: boolean): string {
+  if (mailConfigured === false) return t('admin.requests.emailNotSentNoTransport', lang);
+  if (mailConfigured === true) return t('admin.requests.emailNotSentSmtpError', lang);
+  return t('admin.requests.emailNotSent', lang);
 }
 
 type ThemePreference = NonNullable<UserPreferences['theme']>;
@@ -121,14 +133,21 @@ const ErrorAlert: React.FC<{ message: string; solution?: string; onDismiss?: () 
   </div>
 );
 
-const SuccessAlert: React.FC<{ message: string; description?: string }> = ({ message, description }) => (
+const SuccessAlert: React.FC<{ message: string; onDismiss?: () => void }> = ({ message, onDismiss }) => (
   <div className="rounded-2xl bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800/60 p-4 animate-in fade-in duration-300">
     <div className="flex items-start gap-3">
-      <div className="p-1.5 bg-emerald-100 dark:bg-emerald-900/40 rounded-lg shrink-0"><CheckCircle2 className="w-4 h-4 text-emerald-500" /></div>
-      <div>
-        <p className="font-semibold text-sm text-emerald-800 dark:text-emerald-200">{message}</p>
-        {description && <p className="text-xs text-emerald-600 dark:text-emerald-300/80 mt-1">{description}</p>}
+      <div className="p-2 bg-emerald-100 dark:bg-emerald-900/60 rounded-xl text-emerald-600 dark:text-emerald-300">
+        <CheckCircle2 size={18} />
       </div>
+      <div className="flex-1">
+        <p className="font-semibold text-emerald-900 dark:text-emerald-100 mb-1">Success</p>
+        <p className="text-sm text-emerald-700 dark:text-emerald-300">{message}</p>
+      </div>
+      {onDismiss && (
+        <button onClick={onDismiss} className="text-emerald-400 hover:text-emerald-600 transition-colors">
+          <X size={18} />
+        </button>
+      )}
     </div>
   </div>
 );
@@ -341,7 +360,60 @@ function avatarFallback(name: string) {
   return `https://ui-avatars.com/api/?name=${encodeURIComponent(name)}&background=2563eb&color=fff&bold=true`;
 }
 
+function preferenceLanguageToUiLang(code: string | undefined | null): UiLang | null {
+  if (code == null || String(code).trim() === '') return null;
+  const raw = String(code).trim();
+  const hyphen = raw.replace(/_/g, '-');
+  if (isStaticLang(raw)) return raw;
+  const mapped = DYNAMIC_TO_STATIC_UI_LANG[raw];
+  if (mapped) return mapped;
+  if (/^[a-z]{3}_[A-Za-z]+$/.test(raw)) return raw;
+  const asUnderscore = hyphen.replace(/-/g, '_');
+  if (/^[a-z]{3}_[A-Za-z]+$/.test(asUnderscore)) return asUnderscore;
+  const primary = hyphen.split('-')[0]?.toLowerCase() ?? '';
+  if (primary === 'fr' || primary === 'fra') return 'fr';
+  if (primary === 'en' || primary === 'eng') return 'en';
+  if (primary === 'ar' || primary === 'arb') return 'ar';
+  return null;
+}
+
+/** Si le serveur n’a pas de langue enregistrée, garde celle du navigateur (évite l’écrasement après connexion). */
+function resolveSessionUiLang(
+  profileLanguage: string | undefined | null,
+  storedRaw: string | null,
+): UiLang | null {
+  const explicitProfile =
+    profileLanguage != null && String(profileLanguage).trim() !== '';
+  const fromProf = preferenceLanguageToUiLang(profileLanguage);
+  if (explicitProfile && fromProf) return fromProf;
+  const fromStore = preferenceLanguageToUiLang(storedRaw);
+  if (fromStore) return fromStore;
+  return fromProf;
+}
+
+/** Même langue UI pour fr / fra_Latn / eng_Latn → en, etc. */
+function normalizeUiLangToken(code: UiLang): string {
+  return String(DYNAMIC_TO_STATIC_UI_LANG[code] ?? code);
+}
+
+function syncDocumentToUiLang(next: UiLang) {
+  document.documentElement.dir = getLangDir(next);
+  document.documentElement.lang = isStaticLang(next) ? next : String(next).slice(0, 3).toLowerCase();
+}
+
+function resolvePickedUiLang(next: UiLang): UiLang {
+  return (DYNAMIC_TO_STATIC_UI_LANG[next] ?? next) as UiLang;
+}
+
 function mapBackendUserToFrontendUser(user: UserBackend): User {
+  let prefs = user.preferences;
+  if (typeof prefs === 'string') {
+    try {
+      prefs = JSON.parse(prefs) as User['preferences'];
+    } catch {
+      prefs = undefined;
+    }
+  }
   return {
     id: user.id,
     email: user.email,
@@ -359,7 +431,7 @@ function mapBackendUserToFrontendUser(user: UserBackend): User {
     locked: user.locked,
     lockReason: user.lockReason,
     lockedUntil: user.lockedUntil,
-    preferences: user.preferences,
+    preferences: prefs,
     twoFactorEnabled: user.twoFactorEnabled,
     twoFactorEnrolledAt: user.twoFactorEnrolledAt,
     twoFactorLastVerifiedAt: user.twoFactorLastVerifiedAt,
@@ -370,7 +442,7 @@ function mapBackendUserToFrontendUser(user: UserBackend): User {
 }
 
 function backendRoleLabel(role: string, lang: UiLang): string {
-  if (role === 'platform_admin') return 'Platform Admin';
+  if (role === 'platform_admin') return t('role.platformAdminLabel', lang);
   if (role === 'client') return t('auth.roleClient', lang);
   return roleJobLabel(role, lang);
 }
@@ -512,6 +584,7 @@ const LanguageSwitcher: React.FC<{
     [],
   );
   const availableOptions = options ?? fallbackOptions;
+  const activeToken = normalizeUiLangToken(lang);
   const filteredOptions = useMemo(() => {
     const q = query.trim().toLowerCase();
     if (!q) return availableOptions;
@@ -521,11 +594,11 @@ const LanguageSwitcher: React.FC<{
       return label.includes(q) || code.includes(q);
     });
   }, [availableOptions, query]);
-  const current = availableOptions.find(l => l.code === lang) ?? {
-    code: 'en',
+  const current = availableOptions.find((l) => normalizeUiLangToken(l.code) === activeToken) ?? {
+    code: lang,
     label: String(lang),
     flag: '🏳️',
-    dir: 'ltr' as const,
+    dir: getLangDir(lang),
   };
   return (
     <div className="relative">
@@ -558,21 +631,23 @@ const LanguageSwitcher: React.FC<{
                 />
               </div>
             </div>
-            {filteredOptions.map(l => (
+            {filteredOptions.map((l) => {
+              const selected = normalizeUiLangToken(l.code) === activeToken;
+              return (
               <button
                 key={String(l.code)}
                 onClick={() => { setLang(l.code); setOpen(false); setQuery(''); }}
                 className={`w-full flex items-center gap-3 px-4 py-2.5 text-sm font-medium transition-colors ${
-                  l.code === lang
+                  selected
                     ? 'bg-primary-50 dark:bg-primary-900/20 text-primary-600'
                     : 'text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800'
                 }`}
               >
                 <span className="text-lg">{l.flag}</span>
                 <span>{l.label}</span>
-                {l.code === lang && <CheckCircle2 size={14} className="ml-auto text-primary-500" />}
+                {selected && <CheckCircle2 size={14} className="ml-auto text-primary-500" />}
               </button>
-            ))}
+            );})}
             {!filteredOptions.length && (
               <p className="px-4 py-3 text-xs text-gray-500 dark:text-gray-400">{t('lang.switcher.empty', lang)}</p>
             )}
@@ -595,7 +670,7 @@ const App: React.FC = () => {
   const [isDarkMode, setIsDarkMode] = useState(() =>
     resolveIsDarkModeForPreference(getStoredThemePreference()),
   );
-  const [lang, setLang] = useState<UiLang>(() => localStorage.getItem('finops_lang') || 'fr');
+  const [lang, setLangState] = useState<UiLang>(() => localStorage.getItem('finops_lang') || 'fr');
   const [availableDynamicLangs, setAvailableDynamicLangs] = useState<string[]>(() => [...FALLBACK_NLLB_LANGUAGE_CODES]);
   const [isTranslatingUi, setIsTranslatingUi] = useState(false);
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
@@ -609,12 +684,14 @@ const App: React.FC = () => {
   const useRealBackend = true;
   const [connectionError, setConnectionError] = useState<string | null>(null);
   const [translationServiceAvailable, setTranslationServiceAvailable] = useState(true);
+  const [translationCatalogReady, setTranslationCatalogReady] = useState(false);
   const [userCompanies, setUserCompanies] = useState<CompanyBackend[]>([]);
   const [companySwitching, setCompanySwitching] = useState(false);
   const [companyActionError, setCompanyActionError] = useState<string | null>(null);
   const [notifications, setNotifications] = useState<NotificationBackend[]>([]);
   const [unreadNotificationsCount, setUnreadNotificationsCount] = useState(0);
   const [isNotificationPanelOpen, setIsNotificationPanelOpen] = useState(false);
+  const lastPersistedLangKey = useRef<string | null>(null);
   const languageOptions = useMemo<LanguageOption[]>(() => {
     const staticOptions: LanguageOption[] = LANGUAGES.map((l) => ({ ...l, code: l.code as UiLang }));
     const staticCodes = new Set(staticOptions.map((l) => String(l.code)));
@@ -630,6 +707,13 @@ const App: React.FC = () => {
     return 'Translation service unavailable: using English fallback.';
   }, [translationServiceAvailable, lang]);
 
+  const pickUiLanguage = useCallback((next: UiLang) => {
+    const resolved = resolvePickedUiLang(next);
+    setLangState(resolved);
+    localStorage.setItem('finops_lang', String(resolved));
+    syncDocumentToUiLang(resolved);
+  }, []);
+
   useEffect(() => {
     const init = async () => {
       setConnectionError(null);
@@ -638,7 +722,13 @@ const App: React.FC = () => {
         if (!healthy) { setConnectionError('BACKEND_DOWN'); setIsAppLoading(false); return; }
         const realUser = await RealAPI.getMe();
         if (realUser) {
-          setUser(mapBackendUserToFrontendUser(realUser));
+          const mappedUser = mapBackendUserToFrontendUser(realUser);
+          setUser(mappedUser);
+          const sessionLang = resolveSessionUiLang(
+            mappedUser.preferences?.language,
+            localStorage.getItem('finops_lang'),
+          );
+          if (sessionLang) pickUiLanguage(sessionLang);
           if (realUser.companyId) {
             const company = await RealAPI.getCompany(realUser.companyId);
             if (company) setTenant({ id: company.id, name: company.name, logo: company.logo, currency: company.currency, taxRate: company.taxRate });
@@ -661,10 +751,26 @@ const App: React.FC = () => {
       } catch {
         setTranslationServiceAvailable(false);
         // Keep default language list if translation service languages cannot be loaded.
+      } finally {
+        setTranslationCatalogReady(true);
       }
     };
     void loadAvailableLanguages();
   }, []);
+
+  useEffect(() => {
+    if (!user?.id || !useRealBackend) {
+      lastPersistedLangKey.current = null;
+      return;
+    }
+    const stable = String(DYNAMIC_TO_STATIC_UI_LANG[lang] ?? lang);
+    const key = `${user.id}:${stable}`;
+    if (lastPersistedLangKey.current === key) return;
+    lastPersistedLangKey.current = key;
+    void RealAPI.updateMyPreferences({ language: stable }).catch(() => {
+      if (lastPersistedLangKey.current === key) lastPersistedLangKey.current = null;
+    });
+  }, [lang, user?.id, useRealBackend]);
 
   useEffect(() => {
     const nextIsDark = themePreference === 'dark';
@@ -680,16 +786,14 @@ const App: React.FC = () => {
   }, [themePreference]);
 
   useEffect(() => {
-    if (DYNAMIC_TO_STATIC_UI_LANG[lang]) {
-      setLang(DYNAMIC_TO_STATIC_UI_LANG[lang]);
+    const mapped = DYNAMIC_TO_STATIC_UI_LANG[lang];
+    if (mapped && mapped !== lang) {
+      pickUiLanguage(lang);
       return;
     }
-    localStorage.setItem('finops_lang', lang);
-    const dir = getLangDir(lang);
-    const htmlLang = isStaticLang(lang) ? lang : lang.slice(0, 3).toLowerCase();
-    document.documentElement.dir = dir;
-    document.documentElement.lang = htmlLang;
-  }, [lang]);
+    localStorage.setItem('finops_lang', String(lang));
+    syncDocumentToUiLang(lang);
+  }, [lang, pickUiLanguage]);
 
   useEffect(() => {
     const nextTheme = user?.preferences?.theme;
@@ -759,11 +863,14 @@ const App: React.FC = () => {
   }, [user, useRealBackend]);
 
   useEffect(() => {
-    const available = new Set(languageOptions.map((option) => String(option.code)));
-    if (!isStaticLang(lang) && !available.has(lang)) {
-      setLang('fr');
-    }
-  }, [lang, languageOptions]);
+    if (!translationCatalogReady) return;
+    if (isStaticLang(lang)) return;
+    const mine = normalizeUiLangToken(lang);
+    const inCatalog = languageOptions.some(
+      (o) => normalizeUiLangToken(o.code) === mine || String(o.code) === String(lang),
+    );
+    if (!inCatalog) pickUiLanguage('fr');
+  }, [lang, languageOptions, translationCatalogReady, pickUiLanguage]);
 
   useEffect(() => {
     let cancelled = false;
@@ -806,6 +913,11 @@ const App: React.FC = () => {
 
   const handleLogin = async (u: User, mustChangePassword?: boolean) => {
     setUser({ ...u, mustChangePassword });
+    const sessionLang = resolveSessionUiLang(
+      u.preferences?.language,
+      localStorage.getItem('finops_lang'),
+    );
+    if (sessionLang) pickUiLanguage(sessionLang);
     if (u.companyId) {
       try {
         const company = await RealAPI.getCompany(u.companyId);
@@ -890,7 +1002,17 @@ const App: React.FC = () => {
 
   if (isAppLoading) {
     return (
-      <div className="min-h-screen bg-white dark:bg-gray-950 flex flex-col items-center justify-center gap-6">
+      <div className="relative min-h-screen bg-white dark:bg-gray-950 flex flex-col items-center justify-center gap-6">
+        <div className="absolute top-4 end-4 z-10">
+          <LanguageSwitcher
+            lang={lang}
+            setLang={pickUiLanguage}
+            options={languageOptions}
+            compact
+            isLoading={isTranslatingUi}
+            unavailableMessage={translationUnavailableMessage}
+          />
+        </div>
         <div className="relative">
           <AppLogoMark className="w-24 h-24" />
           <Loader2 size={20} className="absolute -bottom-1 -right-1 text-primary-600 animate-spin" />
@@ -911,7 +1033,13 @@ const App: React.FC = () => {
         try {
           const u = await RealAPI.getMe();
           if (u) {
-            setUser(mapBackendUserToFrontendUser(u));
+            const mapped = mapBackendUserToFrontendUser(u);
+            setUser(mapped);
+            const sessionLang = resolveSessionUiLang(
+              mapped.preferences?.language,
+              localStorage.getItem('finops_lang'),
+            );
+            if (sessionLang) pickUiLanguage(sessionLang);
             if (u.companyId) { const c = await RealAPI.getCompany(u.companyId); if (c) setTenant({ id: c.id, name: c.name, logo: c.logo, currency: c.currency, taxRate: c.taxRate }); }
           }
         } catch {}
@@ -930,7 +1058,7 @@ const App: React.FC = () => {
                 <AlertCircle size={28} className="text-amber-500" />
               </div>
             </div>
-            <LanguageSwitcher lang={lang} setLang={setLang} options={languageOptions} compact isLoading={isTranslatingUi} unavailableMessage={translationUnavailableMessage} />
+            <LanguageSwitcher lang={lang} setLang={pickUiLanguage} options={languageOptions} compact isLoading={isTranslatingUi} unavailableMessage={translationUnavailableMessage} />
           </div>
           <h1 className="text-xl font-bold text-gray-900 dark:text-white text-center mb-2">{t('conn.title', lang)}</h1>
           <p className="text-sm text-gray-500 text-center mb-6">{t('conn.desc', lang)}</p>
@@ -957,16 +1085,25 @@ const App: React.FC = () => {
 
   if (!user) {
     if (showRegisterBusiness) {
-      return <BusinessRegistrationView lang={lang} setLang={setLang} languageOptions={languageOptions} translationUnavailableMessage={translationUnavailableMessage} onSuccess={() => { setShowRegisterBusiness(false); setAuthMode('login'); setShowAuth(true); }} onCancel={() => setShowRegisterBusiness(false)} />;
+      return <BusinessRegistrationView lang={lang} setLang={pickUiLanguage} languageOptions={languageOptions} translationUnavailableMessage={translationUnavailableMessage} onSuccess={() => { setShowRegisterBusiness(false); setAuthMode('login'); setShowAuth(true); }} onCancel={() => setShowRegisterBusiness(false)} />;
     }
     if (showAuth) {
-      return <AuthView lang={lang} setLang={setLang} languageOptions={languageOptions} translationUnavailableMessage={translationUnavailableMessage} mode={authMode} setMode={setAuthMode} onLogin={handleLogin} useRealBackend={useRealBackend} onCancel={() => setShowAuth(false)} onShowRegisterBusiness={() => { setShowAuth(false); setShowRegisterBusiness(true); }} />;
+      return <AuthView lang={lang} setLang={pickUiLanguage} languageOptions={languageOptions} translationUnavailableMessage={translationUnavailableMessage} mode={authMode} setMode={setAuthMode} onLogin={handleLogin} useRealBackend={useRealBackend} onCancel={() => setShowAuth(false)} onShowRegisterBusiness={() => { setShowAuth(false); setShowRegisterBusiness(true); }} />;
     }
-    return <LandingPageView lang={lang} setLang={setLang} languageOptions={languageOptions} translationUnavailableMessage={translationUnavailableMessage} isDarkMode={isDarkMode} onToggleTheme={handleToggleTheme} onEnter={() => { setAuthMode('login'); setShowAuth(true); }} onGetStarted={() => setShowRegisterBusiness(true)} />;
+    return <LandingPageView lang={lang} setLang={pickUiLanguage} languageOptions={languageOptions} translationUnavailableMessage={translationUnavailableMessage} isDarkMode={isDarkMode} onToggleTheme={handleToggleTheme} onEnter={() => { setAuthMode('login'); setShowAuth(true); }} onGetStarted={() => setShowRegisterBusiness(true)} />;
   }
 
   if (user.mustChangePassword) {
-    return <ChangePasswordModal lang={lang} onSuccess={() => setUser({ ...user, mustChangePassword: false })} />;
+    return (
+      <ChangePasswordModal
+        lang={lang}
+        setLang={pickUiLanguage}
+        languageOptions={languageOptions}
+        translationUnavailableMessage={translationUnavailableMessage}
+        isTranslatingUi={isTranslatingUi}
+        onSuccess={() => setUser({ ...user, mustChangePassword: false })}
+      />
+    );
   }
 
   const isClient = user.role === UserRole.CLIENT;
@@ -1065,7 +1202,7 @@ const App: React.FC = () => {
             )}
           </div>
           <div className="flex items-center gap-3">
-            <LanguageSwitcher lang={lang} setLang={setLang} options={languageOptions} compact isLoading={isTranslatingUi} unavailableMessage={translationUnavailableMessage} />
+            <LanguageSwitcher lang={lang} setLang={pickUiLanguage} options={languageOptions} compact isLoading={isTranslatingUi} unavailableMessage={translationUnavailableMessage} />
             <button
               type="button"
               onClick={() => setIsNotificationPanelOpen((v) => !v)}
@@ -1140,16 +1277,29 @@ const App: React.FC = () => {
           {!isClient ? (
             <>
               {activeTab === 'admin-requests' && <AdminRegistrationRequestsView lang={lang} />}
-              {activeTab === 'dashboard' && <AdminDashboardView tenant={tenant} lang={lang} />}
-              {activeTab === 'invoices' && <AdminInvoicesView lang={lang} />}
-              {activeTab === 'expenses' && <AdminExpensesView lang={lang} />}
-              {activeTab === 'clients' && <AdminClientsView lang={lang} />}
+              {activeTab === 'dashboard' && <AdminDashboardView tenant={tenant} user={user} lang={lang} />}
+              {activeTab === 'invoices' && <AdminInvoicesView user={user} lang={lang} />}
+              {activeTab === 'expenses' && <AdminExpensesView user={user} lang={lang} />}
+              {activeTab === 'clients' && <AdminClientsView user={user} lang={lang} />}
               {activeTab === 'analytics' && <AdminAnalyticsView lang={lang} />}
               {activeTab === 'audit' && <AdminAuditLogView lang={lang} />}
               {activeTab === 'users' && <AdminUsersView user={user} lang={lang} />}
               {activeTab === 'join-company' && <EmployeeCompanyJoinView lang={lang} />}
               {activeTab === 'employees' && user.companyId && <AdminEmployeesView companyId={user.companyId} lang={lang} />}
-              {activeTab === 'settings' && <AdminSettingsView user={user} onUserUpdate={setUser} tenant={tenant} onUpdate={setTenant} companyId={user.activeCompanyId || user.companyId} lang={lang} setLang={setLang} themePreference={themePreference} setThemePreference={setThemePreference} />}
+              {activeTab === 'settings' && (
+                <AdminSettingsView
+                  user={user}
+                  onUserUpdate={setUser}
+                  tenant={tenant}
+                  onUpdate={setTenant}
+                  companyId={user.activeCompanyId || user.companyId}
+                  lang={lang}
+                  setLang={pickUiLanguage}
+                  languageOptions={languageOptions}
+                  themePreference={themePreference}
+                  setThemePreference={setThemePreference}
+                />
+              )}
             </>
           ) : (
             <>
@@ -1157,7 +1307,19 @@ const App: React.FC = () => {
               {activeTab === 'invoices' && <ClientInvoicesView user={user} lang={lang} />}
               {activeTab === 'projects' && <ClientProjectsView lang={lang} />}
               {activeTab === 'support' && <ClientSupportView lang={lang} />}
-              {activeTab === 'settings' && <AdminSettingsView user={user} onUserUpdate={setUser} tenant={null} onUpdate={() => {}} lang={lang} setLang={setLang} themePreference={themePreference} setThemePreference={setThemePreference} />}
+              {activeTab === 'settings' && (
+                <AdminSettingsView
+                  user={user}
+                  onUserUpdate={setUser}
+                  tenant={null}
+                  onUpdate={() => {}}
+                  lang={lang}
+                  setLang={pickUiLanguage}
+                  languageOptions={languageOptions}
+                  themePreference={themePreference}
+                  setThemePreference={setThemePreference}
+                />
+              )}
             </>
           )}
         </div>
@@ -1279,6 +1441,181 @@ const AIForecastPanel: React.FC<{ lang: UiLang }> = ({ lang }) => {
   );
 };
 
+const AICashFlowCopilotPanel: React.FC<{ lang: UiLang }> = ({ lang }) => {
+  const [data, setData] = useState<AiCashFlowCopilotResponse | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const isFr = lang === 'fr';
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    setError('');
+    try {
+      setData(await RealAPI.cashFlowCopilot({ historyMonths: 12, horizonMonths: 3 }));
+    } catch (e) {
+      setData(null);
+      setError(getErrorMessage(e).message);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  useEffect(() => {
+    const refresh = () => void load();
+    window.addEventListener(FINOPS_DATA_CHANGED_EVENT, refresh);
+    return () => window.removeEventListener(FINOPS_DATA_CHANGED_EVENT, refresh);
+  }, [load]);
+
+  const money = (value: number) =>
+    `${value.toLocaleString(localeForLang(lang), {
+      minimumFractionDigits: 0,
+      maximumFractionDigits: 2,
+    })} €`;
+
+  return (
+    <Card className="p-6">
+      <div className="flex items-center justify-between mb-4">
+        <div>
+          <h3 className="font-bold text-gray-900 dark:text-white">
+            {isFr ? 'Cash-Flow Copilot' : 'Cash-Flow Copilot'}
+          </h3>
+          <p className="text-sm text-gray-500 dark:text-gray-400">
+            {isFr ? 'Projection des encaissements et décaissements sur 3 mois.' : '3-month inflow, outflow, and net cash projection.'}
+          </p>
+        </div>
+        <PrimaryButton type="button" variant="outline" className="px-3 py-2 text-xs" onClick={() => void load()} loading={loading}>
+          <RefreshCw size={14} /> {t('common.refresh', lang)}
+        </PrimaryButton>
+      </div>
+
+      {error && <p className="mb-4 text-sm text-rose-500">{error}</p>}
+
+      {data ? (
+        <div className="space-y-5">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <div className="rounded-xl bg-gray-50 dark:bg-gray-800/60 p-3">
+              <p className="text-[11px] text-gray-500 uppercase tracking-wider">
+                {isFr ? 'Trésorerie estimée au départ' : 'Estimated opening cash'}
+              </p>
+              <p className="text-lg font-bold text-gray-900 dark:text-white">{money(data.openingCashEstimate)}</p>
+            </div>
+            <div className="rounded-xl bg-gray-50 dark:bg-gray-800/60 p-3">
+              <p className="text-[11px] text-gray-500 uppercase tracking-wider">
+                {isFr ? 'Trésorerie projetée' : 'Projected ending cash'}
+              </p>
+              <p className={`text-lg font-bold ${data.projectedEndingCash >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
+                {money(data.projectedEndingCash)}
+              </p>
+            </div>
+            <div className="rounded-xl bg-gray-50 dark:bg-gray-800/60 p-3">
+              <p className="text-[11px] text-gray-500 uppercase tracking-wider">
+                {isFr ? 'Confiance' : 'Confidence'}
+              </p>
+              <p className="text-lg font-bold text-gray-900 dark:text-white">{Math.round(data.confidence * 100)}%</p>
+            </div>
+          </div>
+
+          <div className="rounded-2xl border border-gray-100 dark:border-gray-800 p-4">
+            <div className="flex items-center justify-between gap-3 mb-3">
+              <p className="text-sm font-semibold text-gray-900 dark:text-white">
+                {isFr ? 'Projection mensuelle' : 'Monthly projection'}
+              </p>
+              <Badge
+                variant={
+                  data.netTrend === 'improving'
+                    ? 'success'
+                    : data.netTrend === 'deteriorating'
+                      ? 'danger'
+                      : 'warning'
+                }
+              >
+                {data.netTrend}
+              </Badge>
+            </div>
+            <div className="h-[220px]">
+              <ResponsiveContainer width="100%" height="100%">
+                <LineChart data={data.timeline}>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#374151" opacity={0.1} />
+                  <XAxis dataKey="period" axisLine={false} tickLine={false} />
+                  <YAxis axisLine={false} tickLine={false} />
+                  <Tooltip />
+                  <Line type="monotone" dataKey="projectedInflows" stroke="#2563eb" strokeWidth={3} dot={{ r: 4 }} />
+                  <Line type="monotone" dataKey="projectedOutflows" stroke="#f97316" strokeWidth={3} dot={{ r: 4 }} />
+                  <Line type="monotone" dataKey="endingCash" stroke="#10b981" strokeWidth={3} dot={{ r: 4 }} />
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+
+          <div className="rounded-xl bg-gray-50 dark:bg-gray-800/60 p-4">
+            <p className="text-sm text-gray-700 dark:text-gray-300">{data.summary}</p>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="rounded-2xl border border-gray-100 dark:border-gray-800 p-4">
+              <p className="text-sm font-semibold text-gray-900 dark:text-white mb-3">
+                {isFr ? 'Principaux moteurs' : 'Key drivers'}
+              </p>
+              <div className="space-y-3">
+                {data.drivers.map((driver, index) => (
+                  <div key={index} className="flex items-start justify-between gap-3">
+                    <div>
+                      <p className="text-sm font-medium text-gray-900 dark:text-white">{driver.label}</p>
+                      <p className="text-xs text-gray-500 dark:text-gray-400">
+                        {driver.direction === 'positive'
+                          ? isFr ? 'Impact positif attendu' : 'Expected positive impact'
+                          : isFr ? 'Pression négative attendue' : 'Expected negative pressure'}
+                      </p>
+                    </div>
+                    <span className={`text-sm font-semibold ${driver.direction === 'positive' ? 'text-emerald-600' : 'text-rose-600'}`}>
+                      {money(driver.impact)}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div className="rounded-2xl border border-gray-100 dark:border-gray-800 p-4">
+              <p className="text-sm font-semibold text-gray-900 dark:text-white mb-3">
+                {isFr ? 'Actions recommandées' : 'Recommended actions'}
+              </p>
+              <div className="space-y-3">
+                {data.actions.map((action, index) => (
+                  <div key={index} className="rounded-xl bg-gray-50 dark:bg-gray-800/60 p-3">
+                    <div className="flex items-center justify-between gap-3">
+                      <p className="text-sm font-medium text-gray-900 dark:text-white">{action.title}</p>
+                      <Badge
+                        variant={
+                          action.priority === 'high'
+                            ? 'danger'
+                            : action.priority === 'medium'
+                              ? 'warning'
+                              : 'info'
+                        }
+                      >
+                        {action.priority}
+                      </Badge>
+                    </div>
+                    <p className="mt-2 text-xs text-gray-500 dark:text-gray-400">{action.detail}</p>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : !loading ? (
+        <p className="text-sm text-gray-500">
+          {isFr ? 'Le copilote de trésorerie est indisponible pour le moment.' : 'Cash-flow copilot is unavailable right now.'}
+        </p>
+      ) : null}
+    </Card>
+  );
+};
+
 const AICostOptimizationPanel: React.FC<{ lang: UiLang }> = ({ lang }) => {
   const [data, setData] = useState<AiOptimizeCostsResponse | null>(null);
   const [loading, setLoading] = useState(true);
@@ -1320,20 +1657,52 @@ const AICostOptimizationPanel: React.FC<{ lang: UiLang }> = ({ lang }) => {
   );
 };
 
+function renderChatAnswerLine(line: string, key: number): React.ReactNode {
+  const trimmed = line.trimEnd();
+  if (!trimmed) return <div key={key} className="h-2" />;
+  if (trimmed.startsWith('### ')) {
+    return (
+      <p key={key} className="text-sm font-semibold text-gray-900 dark:text-white mt-2 mb-0.5">
+        {trimmed.slice(4)}
+      </p>
+    );
+  }
+  const parts = trimmed.split(/(\*\*[^*]+\*\*)/g);
+  return (
+    <p key={key} className="text-sm text-gray-600 dark:text-gray-300 mb-1 leading-relaxed">
+      {parts.map((p, i) => {
+        if (p.startsWith('**') && p.endsWith('**')) {
+          return (
+            <strong key={i} className="font-semibold text-gray-800 dark:text-gray-100">
+              {p.slice(2, -2)}
+            </strong>
+          );
+        }
+        return <span key={i}>{p}</span>;
+      })}
+    </p>
+  );
+}
+
 const AIAssistantWidget: React.FC<{ lang: UiLang }> = ({ lang }) => {
   const [open, setOpen] = useState(false);
   const [message, setMessage] = useState('');
   const [reply, setReply] = useState('');
+  const [followUps, setFollowUps] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
 
-  const ask = async () => {
-    if (!message.trim() || loading) return;
+  const ask = async (text?: string) => {
+    const q = (text ?? message).trim();
+    if (!q || loading) return;
+    setMessage(q);
     setLoading(true);
     try {
-      const data = await RealAPI.chat({ message: message.trim() });
+      const data = await RealAPI.chat({ message: q });
       setReply(data.answer);
+      setFollowUps(Array.isArray(data.followUps) ? data.followUps : []);
     } catch {
       setReply(t('ai.chat.unavailable', lang));
+      setFollowUps([]);
     } finally {
       setLoading(false);
     }
@@ -1342,8 +1711,8 @@ const AIAssistantWidget: React.FC<{ lang: UiLang }> = ({ lang }) => {
   return (
     <div className="fixed bottom-5 end-5 z-[70]">
       {open && (
-        <Card className="w-[360px] max-w-[calc(100vw-2rem)] p-4 mb-3 shadow-2xl">
-          <div className="flex items-center justify-between mb-3">
+        <Card className="w-[360px] max-w-[calc(100vw-2rem)] p-4 mb-3 shadow-2xl max-h-[min(70vh,520px)] flex flex-col">
+          <div className="flex items-center justify-between mb-3 shrink-0">
             <h3 className="font-bold text-gray-900 dark:text-white text-sm">{t('ai.chat.title', lang)}</h3>
             <button
               type="button"
@@ -1353,17 +1722,48 @@ const AIAssistantWidget: React.FC<{ lang: UiLang }> = ({ lang }) => {
               <X size={16} />
             </button>
           </div>
-          <div className="flex gap-2 mb-3">
+          <div className="flex gap-2 mb-3 shrink-0">
             <input
               value={message}
               onChange={(e) => setMessage(e.target.value)}
-              onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); void ask(); } }}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault();
+                  void ask();
+                }
+              }}
               placeholder={t('ai.chat.placeholder', lang)}
               className="flex-1 px-3 py-2 rounded-lg border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 text-sm"
             />
-            <PrimaryButton onClick={ask} loading={loading} className="px-3 py-2 text-sm">{t('ai.chat.ask', lang)}</PrimaryButton>
+            <PrimaryButton onClick={() => void ask()} loading={loading} className="px-3 py-2 text-sm">
+              {t('ai.chat.ask', lang)}
+            </PrimaryButton>
           </div>
-          <p className="text-sm text-gray-600 dark:text-gray-300 min-h-[48px]">{reply || t('ai.chat.ready', lang)}</p>
+          <div className="overflow-y-auto min-h-[48px] flex-1 pe-1">
+            {reply ?
+              reply.split('\n').map((line, i) => renderChatAnswerLine(line, i))
+            : <p className="text-sm text-gray-500">{t('ai.chat.ready', lang)}</p>}
+            {followUps.length > 0 && (
+              <div className="mt-3 pt-2 border-t border-gray-100 dark:border-gray-800">
+                <p className="text-[10px] font-semibold uppercase tracking-wider text-gray-400 mb-2">
+                  {t('ai.chat.suggestions', lang)}
+                </p>
+                <div className="flex flex-col gap-1.5">
+                  {followUps.map((s) => (
+                    <button
+                      key={s}
+                      type="button"
+                      disabled={loading}
+                      onClick={() => void ask(s)}
+                      className="text-left text-xs px-2 py-1.5 rounded-lg bg-primary-50 dark:bg-primary-900/20 text-primary-700 dark:text-primary-300 hover:bg-primary-100 dark:hover:bg-primary-900/40 transition-colors"
+                    >
+                      {s}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
         </Card>
       )}
       <button
@@ -1504,7 +1904,21 @@ const BusinessRegistrationView: React.FC<{ lang: UiLang; setLang: (l: UiLang) =>
    CHANGE PASSWORD
    ================================================================ */
 
-const ChangePasswordModal: React.FC<{ lang: UiLang; onSuccess: () => void }> = ({ lang, onSuccess }) => {
+const ChangePasswordModal: React.FC<{
+  lang: UiLang;
+  setLang: (l: UiLang) => void;
+  languageOptions: LanguageOption[];
+  translationUnavailableMessage: string | null;
+  isTranslatingUi: boolean;
+  onSuccess: () => void;
+}> = ({
+  lang,
+  setLang,
+  languageOptions,
+  translationUnavailableMessage,
+  isTranslatingUi,
+  onSuccess,
+}) => {
   const [current, setCurrent] = useState('');
   const [newPass, setNewPass] = useState('');
   const [confirm, setConfirm] = useState('');
@@ -1538,6 +1952,16 @@ const ChangePasswordModal: React.FC<{ lang: UiLang; onSuccess: () => void }> = (
   return (
     <div className="min-h-screen bg-gray-50 dark:bg-gray-950 flex items-center justify-center p-6">
       <Card className="max-w-md w-full p-8">
+        <div className="flex justify-end mb-4">
+          <LanguageSwitcher
+            lang={lang}
+            setLang={setLang}
+            options={languageOptions}
+            compact
+            isLoading={isTranslatingUi}
+            unavailableMessage={translationUnavailableMessage}
+          />
+        </div>
         <div className="flex justify-center mb-5">
           <div className="w-14 h-14 bg-amber-100 dark:bg-amber-900/30 rounded-2xl flex items-center justify-center"><ShieldCheck size={28} className="text-amber-500" /></div>
         </div>
@@ -2208,11 +2632,19 @@ const NavItem: React.FC<{ icon: React.ReactNode; label: string; active: boolean;
   </button>
 );
 
-const StatCard: React.FC<{ title: string; value: string; change: string; isPositive: boolean; icon: React.ReactNode }> = ({ title, value, change, isPositive, icon }) => (
+const StatCard: React.FC<{
+  title: string;
+  value: string;
+  change?: string;
+  isPositive?: boolean;
+  icon: React.ReactNode;
+}> = ({ title, value, change, isPositive = true, icon }) => (
   <Card className="p-6">
     <div className="flex items-center justify-between mb-4">
       <div className="p-2.5 bg-gray-50 dark:bg-gray-800 rounded-xl text-primary-600">{icon}</div>
-      <Badge variant={isPositive ? 'success' : 'danger'}>{change}</Badge>
+      {change !== undefined && change !== '' && (
+        <Badge variant={isPositive ? 'success' : 'danger'}>{change}</Badge>
+      )}
     </div>
     <p className="text-xs font-medium text-gray-500 uppercase tracking-wider mb-1">{title}</p>
     <p className="text-2xl font-bold text-gray-900 dark:text-white">{value}</p>
@@ -2231,8 +2663,23 @@ const AdminRegistrationRequestsView: React.FC<{ lang: UiLang }> = ({ lang }) => 
   const [error, setError] = useState('');
   const [errorSolution, setErrorSolution] = useState<string | undefined>();
   const [tab, setTab] = useState<'pending' | 'all'>('pending');
-  const [acceptedCredentials, setAcceptedCredentials] = useState<{ email: string; tempPassword: string; role: string; companyName: string; emailSent: boolean; previewUrl?: string } | null>(null);
-  const [rejectedInfo, setRejectedInfo] = useState<{ email: string; name: string; reason: string; emailSent: boolean; previewUrl?: string } | null>(null);
+  const [acceptedCredentials, setAcceptedCredentials] = useState<{
+    email: string;
+    tempPassword: string;
+    role: string;
+    companyName: string;
+    emailSent: boolean;
+    previewUrl?: string;
+    mailConfigured?: boolean;
+  } | null>(null);
+  const [rejectedInfo, setRejectedInfo] = useState<{
+    email: string;
+    name: string;
+    reason: string;
+    emailSent: boolean;
+    previewUrl?: string;
+    mailConfigured?: boolean;
+  } | null>(null);
   const [copied, setCopied] = useState(false);
 
   const loadRequests = () => {
@@ -2252,7 +2699,12 @@ const AdminRegistrationRequestsView: React.FC<{ lang: UiLang }> = ({ lang }) => 
     try {
       const result = await RealAPI.acceptRegistrationRequest(id);
       setRequests(prev => prev.map(r => r.id === id ? { ...r, status: 'accepted' } : r));
-      setAcceptedCredentials({ ...result.credentials, emailSent: result.emailSent, previewUrl: result.previewUrl });
+      setAcceptedCredentials({
+        ...result.credentials,
+        emailSent: result.emailSent,
+        previewUrl: result.previewUrl,
+        mailConfigured: result.mailConfigured,
+      });
     }
     catch (e) { const { message, solution } = getErrorMessage(e); setError(message); setErrorSolution(solution); }
     finally { setProcessing(null); }
@@ -2266,7 +2718,12 @@ const AdminRegistrationRequestsView: React.FC<{ lang: UiLang }> = ({ lang }) => 
       const result = await RealAPI.rejectRegistrationRequest(id, reason);
       setRequests(prev => prev.map(r => r.id === id ? { ...r, status: 'rejected' } : r));
       setRejectReason(prev => ({ ...prev, [id]: '' }));
-      setRejectedInfo({ ...result.rejectedUser, emailSent: result.emailSent, previewUrl: result.previewUrl });
+      setRejectedInfo({
+        ...result.rejectedUser,
+        emailSent: result.emailSent,
+        previewUrl: result.previewUrl,
+        mailConfigured: result.mailConfigured,
+      });
     }
     catch (e) { const { message, solution } = getErrorMessage(e); setError(message); setErrorSolution(solution); }
     finally { setProcessing(null); }
@@ -2332,7 +2789,7 @@ const AdminRegistrationRequestsView: React.FC<{ lang: UiLang }> = ({ lang }) => 
               <p className="text-sm text-emerald-700 dark:text-emerald-300 mt-0.5">
                 {acceptedCredentials.emailSent
                   ? t('admin.requests.emailSent', lang)
-                  : t('admin.requests.emailNotSent', lang)
+                  : mailNotDeliveredHint(lang, acceptedCredentials.mailConfigured)
                 }
               </p>
             </div>
@@ -2380,8 +2837,7 @@ const AdminRegistrationRequestsView: React.FC<{ lang: UiLang }> = ({ lang }) => 
               <p className="text-sm text-rose-700 dark:text-rose-300 mt-0.5">
                 {rejectedInfo.emailSent
                   ? `${t('admin.requests.rejectedEmailSent', lang)} ${rejectedInfo.email}.`
-                  : `${t('admin.requests.rejectedEmailNotSent', lang)} ${rejectedInfo.email} ${t('smtp.suffix', lang)}`
-                }
+                  : `${mailNotDeliveredHint(lang, rejectedInfo.mailConfigured)} — ${rejectedInfo.email}`}
               </p>
               {rejectedInfo.previewUrl && (
                 <a href={rejectedInfo.previewUrl} target="_blank" rel="noopener noreferrer"
@@ -2465,8 +2921,23 @@ const AdminEmployeeAccessRequestsPanel: React.FC<{ lang: UiLang }> = ({ lang }) 
   const [processing, setProcessing] = useState<string | null>(null);
   const [error, setError] = useState('');
   const [errorSolution, setErrorSolution] = useState<string | undefined>();
-  const [acceptedCredentials, setAcceptedCredentials] = useState<{ email: string; tempPassword: string; role: string; companyName: string; emailSent: boolean; previewUrl?: string } | null>(null);
-  const [rejectedInfo, setRejectedInfo] = useState<{ email: string; name: string; reason: string; emailSent: boolean; previewUrl?: string } | null>(null);
+  const [acceptedCredentials, setAcceptedCredentials] = useState<{
+    email: string;
+    tempPassword: string;
+    role: string;
+    companyName: string;
+    emailSent: boolean;
+    previewUrl?: string;
+    mailConfigured?: boolean;
+  } | null>(null);
+  const [rejectedInfo, setRejectedInfo] = useState<{
+    email: string;
+    name: string;
+    reason: string;
+    emailSent: boolean;
+    previewUrl?: string;
+    mailConfigured?: boolean;
+  } | null>(null);
   const [copied, setCopied] = useState(false);
 
   const loadRequests = () => {
@@ -2502,6 +2973,7 @@ const AdminEmployeeAccessRequestsPanel: React.FC<{ lang: UiLang }> = ({ lang }) 
         ...result.credentials,
         emailSent: result.emailSent,
         previewUrl: result.previewUrl,
+        mailConfigured: result.mailConfigured,
       });
     } catch (e) {
       const { message, solution } = getErrorMessage(e);
@@ -2530,6 +3002,7 @@ const AdminEmployeeAccessRequestsPanel: React.FC<{ lang: UiLang }> = ({ lang }) 
         ...result.rejectedUser,
         emailSent: result.emailSent,
         previewUrl: result.previewUrl,
+        mailConfigured: result.mailConfigured,
       });
     } catch (e) {
       const { message, solution } = getErrorMessage(e);
@@ -2583,7 +3056,9 @@ const AdminEmployeeAccessRequestsPanel: React.FC<{ lang: UiLang }> = ({ lang }) 
       {acceptedCredentials && (
         <Card className="p-4 mb-4 border-emerald-200 dark:border-emerald-800/60 bg-emerald-50/50 dark:bg-emerald-950/20">
           <p className="text-sm text-emerald-800 dark:text-emerald-300 font-semibold">{t('admin.employeeReq.acceptedBanner', lang)}</p>
-          <p className="text-xs text-emerald-700 dark:text-emerald-300 mt-1">{acceptedCredentials.emailSent ? t('admin.employeeReq.emailSentShort', lang) : t('admin.employeeReq.emailNotSentShort', lang)}</p>
+          <p className="text-xs text-emerald-700 dark:text-emerald-300 mt-1">
+            {acceptedCredentials.emailSent ? t('admin.employeeReq.emailSentShort', lang) : mailNotDeliveredHint(lang, acceptedCredentials.mailConfigured)}
+          </p>
           <div className="mt-3 grid grid-cols-1 sm:grid-cols-3 gap-3">
             <div><p className="text-[11px] text-gray-400 uppercase tracking-wider">{t('common.email', lang)}</p><p className="font-mono font-semibold text-sm">{acceptedCredentials.email}</p></div>
             <div><p className="text-[11px] text-gray-400 uppercase tracking-wider">{t('admin.requests.tempPassword', lang)}</p><p className="font-mono font-semibold text-sm text-primary-600">{acceptedCredentials.tempPassword}</p></div>
@@ -2606,7 +3081,11 @@ const AdminEmployeeAccessRequestsPanel: React.FC<{ lang: UiLang }> = ({ lang }) 
       {rejectedInfo && (
         <Card className="p-4 mb-4 border-rose-200 dark:border-rose-800/60 bg-rose-50/50 dark:bg-rose-950/20">
           <p className="text-sm text-rose-800 dark:text-rose-300 font-semibold">{t('admin.employeeReq.rejectedBanner', lang)} — {rejectedInfo.name}</p>
-          <p className="text-xs text-rose-700 dark:text-rose-300 mt-1">{rejectedInfo.emailSent ? `${t('admin.requests.rejectedEmailSent', lang)} ${rejectedInfo.email}.` : `${t('admin.requests.rejectedEmailNotSent', lang)} ${rejectedInfo.email} ${t('smtp.suffix', lang)}`}</p>
+          <p className="text-xs text-rose-700 dark:text-rose-300 mt-1">
+            {rejectedInfo.emailSent
+              ? `${t('admin.requests.rejectedEmailSent', lang)} ${rejectedInfo.email}.`
+              : `${mailNotDeliveredHint(lang, rejectedInfo.mailConfigured)} — ${rejectedInfo.email}`}
+          </p>
           <p className="text-xs text-rose-500 mt-1"><strong>{t('admin.requests.reason', lang)}</strong> {rejectedInfo.reason}</p>
           {rejectedInfo.previewUrl && (
             <a href={rejectedInfo.previewUrl} target="_blank" rel="noopener noreferrer" className="text-xs text-primary-600 hover:text-primary-700 font-semibold hover:underline flex items-center gap-1 mt-1">
@@ -2943,7 +3422,15 @@ const AdminEmployeesView: React.FC<{ companyId: string; lang: UiLang }> = ({ com
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
   const [errorSolution, setErrorSolution] = useState<string | undefined>();
-  const [createdCredentials, setCreatedCredentials] = useState<{ email: string; tempPassword: string; role: string; name: string; emailSent: boolean; previewUrl?: string } | null>(null);
+  const [createdCredentials, setCreatedCredentials] = useState<{
+    email: string;
+    tempPassword: string;
+    role: string;
+    name: string;
+    emailSent: boolean;
+    previewUrl?: string;
+    mailConfigured?: boolean;
+  } | null>(null);
   const [copiedEmp, setCopiedEmp] = useState(false);
 
   const loadEmployees = () => {
@@ -2974,7 +3461,15 @@ const AdminEmployeesView: React.FC<{ companyId: string; lang: UiLang }> = ({ com
       const result = await RealAPI.createEmployee(companyId, form);
       loadEmployees();
       setShowForm(false);
-      setCreatedCredentials({ email: form.email, tempPassword: result.tempPassword, role: result.role, name: form.name, emailSent: result.emailSent, previewUrl: result.previewUrl });
+      setCreatedCredentials({
+        email: form.email,
+        tempPassword: result.tempPassword,
+        role: result.role,
+        name: form.name,
+        emailSent: result.emailSent,
+        previewUrl: result.previewUrl,
+        mailConfigured: result.mailConfigured,
+      });
       setForm({ email: '', name: '', role: 'employee' });
     } catch (err) { const { message, solution } = getErrorMessage(err); setError(message); setErrorSolution(solution); }
     finally { setSubmitting(false); }
@@ -3011,8 +3506,7 @@ const AdminEmployeesView: React.FC<{ companyId: string; lang: UiLang }> = ({ com
               <p className="text-sm text-emerald-700 dark:text-emerald-300 mt-0.5">
                 {createdCredentials.emailSent
                   ? t('emp.emailSent', lang)
-                  : t('emp.emailNotSent', lang)
-                }
+                  : mailNotDeliveredHint(lang, createdCredentials.mailConfigured)}
               </p>
             </div>
           </div>
@@ -3109,9 +3603,73 @@ const AdminEmployeesView: React.FC<{ companyId: string; lang: UiLang }> = ({ com
    ADMIN DASHBOARD
    ================================================================ */
 
-const AdminDashboardView: React.FC<{ tenant: Tenant | null; lang: UiLang }> = ({ tenant, lang }) => {
+function dashboardLast6Periods(): string[] {
+  const out: string[] = [];
+  const d = new Date();
+  for (let i = 5; i >= 0; i -= 1) {
+    const x = new Date(d.getFullYear(), d.getMonth() - i, 1);
+    out.push(`${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, '0')}`);
+  }
+  return out;
+}
+
+function dashboardPeriodLabel(period: string, lang: UiLang): string {
+  const [ys, ms] = period.split('-');
+  const y = parseInt(ys, 10);
+  const m = parseInt(ms, 10);
+  if (!Number.isFinite(y) || !Number.isFinite(m)) return period;
+  const dt = new Date(y, m - 1, 1);
+  return dt.toLocaleString(localeForLang(lang), { month: 'short', year: '2-digit' });
+}
+
+const AdminDashboardView: React.FC<{ tenant: Tenant | null; user: User; lang: UiLang }> = ({
+  tenant,
+  user,
+  lang,
+}) => {
+  const [summary, setSummary] = useState<DashboardSummaryBackend | null>(null);
+  const [dashLoading, setDashLoading] = useState(true);
+  const [dashErr, setDashErr] = useState('');
+
+  const loadSummary = useCallback(async () => {
+    setDashLoading(true);
+    setDashErr('');
+    try {
+      const s = await RealAPI.getDashboardSummary();
+      setSummary(s);
+    } catch (e) {
+      setDashErr(getErrorMessage(e).message);
+      setSummary(null);
+    } finally {
+      setDashLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadSummary();
+  }, [loadSummary, user.activeCompanyId, user.companyId]);
+
+  useEffect(() => {
+    const fn = () => void loadSummary();
+    window.addEventListener(FINOPS_DATA_CHANGED_EVENT, fn);
+    return () => window.removeEventListener(FINOPS_DATA_CHANGED_EVENT, fn);
+  }, [loadSummary]);
+
+  const chartRows = useMemo(() => {
+    const periods = dashboardLast6Periods();
+    const byP = new Map((summary?.monthly ?? []).map((m) => [m.period, m]));
+    return periods.map((period) => {
+      const hit = byP.get(period);
+      return {
+        name: dashboardPeriodLabel(period, lang),
+        revenue: hit?.revenue ?? 0,
+        expenses: hit?.expenses ?? 0,
+      };
+    });
+  }, [summary, lang]);
+
   const handleExport = () => {
-    const rows = REVENUE_DATA.map((r) => ({
+    const rows = chartRows.map((r) => ({
       month: r.name,
       revenue: r.revenue,
       expenses: r.expenses,
@@ -3120,62 +3678,119 @@ const AdminDashboardView: React.FC<{ tenant: Tenant | null; lang: UiLang }> = ({
     downloadCsv(`dashboard-${tenant?.name || 'finops'}.csv`, rows);
   };
 
+  const loc = localeForLang(lang);
+  const fmt = (n: number) => `${n.toLocaleString(loc, { minimumFractionDigits: 0, maximumFractionDigits: 2 })} €`;
+
   return (
-  <div className="space-y-6">
-    <PageHeader title={t('page.dashboard.title', lang)} description={`${t('page.dashboard.overview', lang)} ${tenant?.name || t('page.dashboard.companyFallback', lang)}`}
-      actions={<PrimaryButton onClick={handleExport} className="px-5 py-2.5 text-sm"><Download size={16} /> {t('dash.export', lang)}</PrimaryButton>}
-    />
+    <div className="space-y-6">
+      <PageHeader
+        title={t('page.dashboard.title', lang)}
+        description={`${t('page.dashboard.overview', lang)} ${tenant?.name || t('page.dashboard.companyFallback', lang)}`}
+        actions={
+          <div className="flex items-center gap-2">
+            <PrimaryButton
+              type="button"
+              variant="outline"
+              className="px-4 py-2.5 text-sm"
+              onClick={() => void loadSummary()}
+              disabled={dashLoading}
+            >
+              <RefreshCw size={16} className={dashLoading ? 'animate-spin' : ''} /> {t('common.refresh', lang)}
+            </PrimaryButton>
+            <PrimaryButton onClick={handleExport} className="px-5 py-2.5 text-sm">
+              <Download size={16} /> {t('dash.export', lang)}
+            </PrimaryButton>
+          </div>
+        }
+      />
 
-    <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-      <div className="lg:col-span-2 grid grid-cols-1 sm:grid-cols-2 gap-4">
-        <StatCard title={t('dash.totalRevenue', lang)} value="452 109 €" change="+12.5%" isPositive icon={<TrendingUp size={20} />} />
-        <StatCard title={t('dash.totalExpenses', lang)} value="12 890 €" change="-4.2%" isPositive={false} icon={<Wallet size={20} />} />
-        <StatCard title={t('dash.retention', lang)} value="94.2%" change="+2.1%" isPositive icon={<Users size={20} />} />
-        <StatCard title={t('dash.netProfit', lang)} value="38 720 €" change="+8.1%" isPositive icon={<CheckCircle2 size={20} />} />
+      {dashErr && <ErrorAlert message={dashErr} onDismiss={() => setDashErr('')} />}
+
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <div className="lg:col-span-2 grid grid-cols-1 sm:grid-cols-2 gap-4">
+          {dashLoading && !summary ? (
+            <div className="sm:col-span-2 flex justify-center py-12">
+              <Loader2 className="animate-spin text-primary-600" size={32} />
+            </div>
+          ) : (
+            <>
+              <StatCard
+                title={t('dash.invoicedExclDraft', lang)}
+                value={fmt(summary?.invoicedTotal ?? 0)}
+                icon={<TrendingUp size={20} />}
+              />
+              <StatCard
+                title={t('dash.totalExpenses', lang)}
+                value={fmt(summary?.expenseTotal ?? 0)}
+                icon={<Wallet size={20} />}
+              />
+              <StatCard
+                title={t('dash.activeClients', lang)}
+                value={String(summary?.clientCount ?? 0)}
+                icon={<Users size={20} />}
+              />
+              <StatCard
+                title={t('dash.netPaidMinusExpenses', lang)}
+                value={fmt(summary?.netPaidMinusExpenses ?? 0)}
+                icon={<CheckCircle2 size={20} />}
+              />
+              {summary != null && summary.outstandingTotal > 0 && (
+                <div className="sm:col-span-2 text-sm text-amber-600 dark:text-amber-400">
+                  {t('dash.pendingInvoices', lang)}:{' '}
+                  <span className="font-semibold">{fmt(summary.outstandingTotal)}</span>
+                </div>
+              )}
+            </>
+          )}
+        </div>
+        <SmartInsightCard lang={lang} />
       </div>
-      <SmartInsightCard lang={lang} />
-    </div>
 
-    <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-      <AIForecastPanel lang={lang} />
-      <AICostOptimizationPanel lang={lang} />
-    </div>
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <AICashFlowCopilotPanel lang={lang} />
+        <AIForecastPanel lang={lang} />
+      </div>
 
-    <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-      <AIMonthlyReportCard lang={lang} />
-    </div>
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <AICostOptimizationPanel lang={lang} />
+        <AIMonthlyReportCard lang={lang} />
+      </div>
 
-    <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-      <Card className="p-6">
-        <h2 className="font-bold text-gray-900 dark:text-white mb-6">{t('dash.chartRevenue6m', lang)}</h2>
-        <div className="h-[280px]">
-          <ResponsiveContainer width="100%" height="100%">
-            <AreaChart data={REVENUE_DATA}>
-              <defs>
-                <linearGradient id="revenueGrad" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%" stopColor="#2563eb" stopOpacity={0.15} />
-                  <stop offset="95%" stopColor="#2563eb" stopOpacity={0} />
-                </linearGradient>
-              </defs>
-              <Tooltip contentStyle={{ borderRadius: '12px', background: '#111827', border: 'none', color: '#fff', fontSize: '13px' }} />
-              <Area type="monotone" dataKey="revenue" stroke="#2563eb" strokeWidth={3} fill="url(#revenueGrad)" />
-            </AreaChart>
-          </ResponsiveContainer>
-        </div>
-      </Card>
-      <Card className="p-6">
-        <h2 className="font-bold text-gray-900 dark:text-white mb-6">{t('dash.chartExpensesCat', lang)}</h2>
-        <div className="h-[280px]">
-          <ResponsiveContainer width="100%" height="100%">
-            <BarChart data={REVENUE_DATA}>
-              <Tooltip contentStyle={{ borderRadius: '12px', background: '#111827', border: 'none', color: '#fff', fontSize: '13px' }} />
-              <Bar dataKey="expenses" fill="#f43f5e" radius={[6, 6, 0, 0]} />
-            </BarChart>
-          </ResponsiveContainer>
-        </div>
-      </Card>
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <Card className="p-6">
+          <h2 className="font-bold text-gray-900 dark:text-white mb-6">{t('dash.chartRevenue6m', lang)}</h2>
+          <div className="h-[280px]">
+            <ResponsiveContainer width="100%" height="100%">
+              <AreaChart data={chartRows}>
+                <defs>
+                  <linearGradient id="revenueGrad" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="5%" stopColor="#2563eb" stopOpacity={0.15} />
+                    <stop offset="95%" stopColor="#2563eb" stopOpacity={0} />
+                  </linearGradient>
+                </defs>
+                <Tooltip
+                  contentStyle={{ borderRadius: '12px', background: '#111827', border: 'none', color: '#fff', fontSize: '13px' }}
+                />
+                <Area type="monotone" dataKey="revenue" stroke="#2563eb" strokeWidth={3} fill="url(#revenueGrad)" />
+              </AreaChart>
+            </ResponsiveContainer>
+          </div>
+        </Card>
+        <Card className="p-6">
+          <h2 className="font-bold text-gray-900 dark:text-white mb-6">{t('dash.chartExpenses6m', lang)}</h2>
+          <div className="h-[280px]">
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={chartRows}>
+                <Tooltip
+                  contentStyle={{ borderRadius: '12px', background: '#111827', border: 'none', color: '#fff', fontSize: '13px' }}
+                />
+                <Bar dataKey="expenses" fill="#f43f5e" radius={[6, 6, 0, 0]} />
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+        </Card>
+      </div>
     </div>
-  </div>
   );
 };
 
@@ -3183,82 +3798,1077 @@ const AdminDashboardView: React.FC<{ tenant: Tenant | null; lang: UiLang }> = ({
    ADMIN - INVOICES
    ================================================================ */
 
-const AdminInvoicesView: React.FC<{ lang: UiLang }> = ({ lang }) => {
+const AdminInvoicesView: React.FC<{ user: User; lang: UiLang }> = ({ user, lang }) => {
   const [data, setData] = useState<Invoice[]>([]);
+  const [crmClients, setCrmClients] = useState<Client[]>([]);
   const [loading, setLoading] = useState(true);
-  const [adding, setAdding] = useState(false);
   const [err, setErr] = useState('');
-  useEffect(() => {
-    void (async () => {
-      try {
-        const rows = await RealAPI.getInvoices();
-        setData(rows.map(invoiceFromBackend));
-      } catch (e) {
-        const { message } = getErrorMessage(e);
-        setErr(message);
-      } finally {
-        setLoading(false);
-      }
-    })();
-  }, []);
+  const [success, setSuccess] = useState('');
+  const [modalOpen, setModalOpen] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [intakeOpen, setIntakeOpen] = useState(false);
+  const [intakeLoading, setIntakeLoading] = useState(false);
+  const [intakeApplying, setIntakeApplying] = useState(false);
+  const [intakeSourceText, setIntakeSourceText] = useState('');
+  const [intakeDocumentType, setIntakeDocumentType] = useState<'auto' | 'invoice' | 'receipt'>('auto');
+  const [intakeResult, setIntakeResult] = useState<AiSmartDocumentIntakeResponse | null>(null);
+  const [paymentSuggestionOpen, setPaymentSuggestionOpen] = useState(false);
+  const [paymentSuggestionInvoice, setPaymentSuggestionInvoice] = useState<Invoice | null>(null);
+  const [paymentSuggestionData, setPaymentSuggestionData] = useState<{
+    invoiceId: string;
+    recommendationType: string;
+    numberOfChunks: number;
+    chunkAmounts: number[];
+    proposedDates: string[];
+    confidenceScore: number;
+    suggestedTerms?: string;
+    explanation?: string;
+  } | null>(null);
+  const [paymentSuggestionLoading, setPaymentSuggestionLoading] = useState(false);
+  const [pdfLoadingId, setPdfLoadingId] = useState<string | null>(null);
+  const [form, setForm] = useState({
+    number: '',
+    linkCrm: true,
+    clientId: '',
+    clientName: '',
+    clientEmail: '',
+    date: new Date().toISOString().slice(0, 10),
+    dueDate: '',
+    total: '',
+    status: 'Sent' as Invoice['status'],
+  });
 
-  const handleAddInvoice = async () => {
-    if (adding) return;
-    setAdding(true);
+  const invStatusOptions = useMemo(
+    () =>
+      (['Draft', 'Sent', 'Paid', 'Overdue'] as const).map((s) => ({
+        value: s,
+        label: invoiceStatusLabel(s, lang),
+      })),
+    [lang],
+  );
+
+  const clientSelectOptions = useMemo(() => {
+    const opts = [{ value: '', label: t('page.invoices.pickClient', lang) }];
+    const ids = new Set(crmClients.map((c) => c.id));
+    crmClients.forEach((c) => {
+      opts.push({
+        value: c.id,
+        label: `${c.name}${c.company ? ` — ${c.company}` : ''}`,
+      });
+    });
+    if (form.clientId && !ids.has(form.clientId)) {
+      opts.push({
+        value: form.clientId,
+        label: `${form.clientName || form.clientId} ${t('page.invoices.clientOrphanOption', lang)}`,
+      });
+    }
+    return opts;
+  }, [crmClients, lang, form.clientId, form.clientName]);
+
+  const loadAll = async () => {
+    setLoading(true);
     setErr('');
-    const ts = Date.now();
+    try {
+      const [invRows, clientRows] = await Promise.all([
+        RealAPI.getInvoices(),
+        RealAPI.getClients(),
+      ]);
+      setData(invRows.map(invoiceFromBackend));
+      setCrmClients(clientRows.map(clientFromBackend));
+    } catch (e) {
+      setErr(getErrorMessage(e).message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    void loadAll();
+  }, [user.activeCompanyId, user.companyId]);
+
+  const resetIntake = () => {
+    setIntakeLoading(false);
+    setIntakeApplying(false);
+    setIntakeSourceText('');
+    setIntakeDocumentType('auto');
+    setIntakeResult(null);
+  };
+
+  const closeIntake = () => {
+    if (intakeLoading || intakeApplying) return;
+    setIntakeOpen(false);
+    resetIntake();
+  };
+
+  const openNew = () => {
+    const due = new Date(Date.now() + 7 * 86400000).toISOString().slice(0, 10);
+    setEditingId(null);
+    setForm({
+      number: `INV-${String(Date.now()).slice(-6)}`,
+      linkCrm: true,
+      clientId: '',
+      clientName: '',
+      clientEmail: '',
+      date: new Date().toISOString().slice(0, 10),
+      dueDate: due,
+      total: '',
+      status: 'Sent',
+    });
+    setModalOpen(true);
+  };
+
+  const openEdit = (inv: Invoice) => {
+    setEditingId(inv.id);
+    setForm({
+      number: inv.number,
+      linkCrm: !!inv.clientId,
+      clientId: inv.clientId || '',
+      clientName: inv.clientName,
+      clientEmail: inv.clientEmail || '',
+      date: inv.date,
+      dueDate: inv.dueDate,
+      total: String(inv.total),
+      status: inv.status,
+    });
+    setModalOpen(true);
+  };
+
+  const analyzeSmartIntake = async () => {
+    if (!intakeSourceText.trim()) {
+      setErr(lang === 'fr' ? 'Collez le texte du document avant de lancer l’analyse.' : 'Paste the document text before running AI intake.');
+      return;
+    }
+
+    setErr('');
+    setSuccess('');
+    setIntakeLoading(true);
+    try {
+      const result = await RealAPI.smartDocumentIntake({
+        sourceText: intakeSourceText,
+        documentType: intakeDocumentType,
+      });
+      setIntakeResult(result);
+    } catch (e) {
+      setErr(getErrorMessage(e).message);
+      setIntakeResult(null);
+    } finally {
+      setIntakeLoading(false);
+    }
+  };
+
+  const createInvoiceDraftFromIntake = async () => {
+    if (!intakeResult?.invoiceDraft) return;
+    setIntakeApplying(true);
+    setErr('');
+    setSuccess('');
     try {
       const row = await RealAPI.createInvoice({
-        number: `INV-${String(ts).slice(-6)}`,
-        clientName: t('page.invoices.defaultClient', lang),
-        date: new Date().toISOString().slice(0, 10),
-        dueDate: new Date(Date.now() + 7 * 86400000).toISOString().slice(0, 10),
-        total: 1000,
-        status: 'Sent',
+        number: intakeResult.invoiceDraft.number,
+        clientName: intakeResult.invoiceDraft.clientName,
+        clientEmail: intakeResult.invoiceDraft.clientEmail,
+        date: intakeResult.invoiceDraft.date,
+        dueDate: intakeResult.invoiceDraft.dueDate,
+        total: intakeResult.invoiceDraft.total,
+        status: 'Draft',
+        lineItems: intakeResult.invoiceDraft.lineItems.map((line, index) => ({
+          productKey: `AI-LINE-${index + 1}`,
+          notes: line.description,
+          quantity: line.quantity,
+          cost: line.unitPrice,
+        })),
       });
       setData((prev) => [invoiceFromBackend(row), ...prev]);
+      notifyFinopsDataChanged();
+      setSuccess(
+        lang === 'fr'
+          ? `Le brouillon ${row.number} a été créé depuis l’analyse IA.`
+          : `Draft invoice ${row.number} was created from the AI intake.`,
+      );
+      setIntakeOpen(false);
+      resetIntake();
     } catch (e) {
-      const { message } = getErrorMessage(e);
-      setErr(message);
+      setErr(getErrorMessage(e).message);
     } finally {
-      setAdding(false);
+      setIntakeApplying(false);
+    }
+  };
+
+  const createExpenseFromIntake = async () => {
+    if (!intakeResult?.expenseDraft) return;
+    setIntakeApplying(true);
+    setErr('');
+    setSuccess('');
+    try {
+      await RealAPI.createExpense({
+        amount: intakeResult.expenseDraft.amount,
+        expenseDate: intakeResult.expenseDraft.expenseDate,
+        category: intakeResult.expenseDraft.category,
+        vendor: intakeResult.expenseDraft.vendor,
+        notes: intakeResult.expenseDraft.notes,
+      });
+      notifyFinopsDataChanged();
+      setSuccess(
+        lang === 'fr'
+          ? 'La dépense a été créée depuis l’analyse IA.'
+          : 'Expense entry was created from the AI intake.',
+      );
+      setIntakeOpen(false);
+      resetIntake();
+    } catch (e) {
+      setErr(getErrorMessage(e).message);
+    } finally {
+      setIntakeApplying(false);
+    }
+  };
+
+  const submitInvoice = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const total = parseFloat(form.total.replace(',', '.'));
+    if (!Number.isFinite(total) || total <= 0) {
+      setErr(t('page.invoices.errTotal', lang));
+      return;
+    }
+    if (form.linkCrm && !form.clientId) {
+      setErr(t('page.invoices.errClient', lang));
+      return;
+    }
+    if (!form.linkCrm && !form.clientName.trim()) {
+      setErr(t('page.invoices.errClient', lang));
+      return;
+    }
+    setSaving(true);
+    setErr('');
+    try {
+      if (editingId) {
+        const payload: Parameters<typeof RealAPI.updateInvoice>[1] = {
+          number: form.number.trim(),
+          date: form.date,
+          dueDate: form.dueDate,
+          total,
+          status: form.status,
+        };
+        if (form.linkCrm && form.clientId) {
+          payload.clientId = form.clientId;
+        } else {
+          payload.clientId = null;
+          payload.clientName = form.clientName.trim();
+          payload.clientEmail = form.clientEmail.trim() || undefined;
+        }
+        const row = await RealAPI.updateInvoice(editingId, payload);
+        setData((prev) => prev.map((x) => (x.id === editingId ? invoiceFromBackend(row) : x)));
+      } else {
+        if (form.linkCrm && form.clientId) {
+          const row = await RealAPI.createInvoice({
+            number: form.number.trim(),
+            clientId: form.clientId,
+            date: form.date,
+            dueDate: form.dueDate,
+            total,
+            status: form.status,
+          });
+          setData((prev) => [invoiceFromBackend(row), ...prev]);
+        } else {
+          const row = await RealAPI.createInvoice({
+            number: form.number.trim(),
+            clientName: form.clientName.trim(),
+            clientEmail: form.clientEmail.trim() || undefined,
+            date: form.date,
+            dueDate: form.dueDate,
+            total,
+            status: form.status,
+          });
+          setData((prev) => [invoiceFromBackend(row), ...prev]);
+        }
+      }
+      notifyFinopsDataChanged();
+      setModalOpen(false);
+    } catch (e) {
+      setErr(getErrorMessage(e).message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleMarkPaid = async (id: string) => {
+    setErr('');
+    try {
+      const row = await RealAPI.payInvoice(id);
+      setData((prev) => prev.map((x) => (x.id === id ? invoiceFromBackend(row) : x)));
+      notifyFinopsDataChanged();
+    } catch (e) {
+      setErr(getErrorMessage(e).message);
+    }
+  };
+
+  const handleDelete = async (id: string) => {
+    if (!window.confirm(t('page.invoices.deleteConfirm', lang))) return;
+    setErr('');
+    try {
+      await RealAPI.deleteInvoice(id);
+      setData((prev) => prev.filter((x) => x.id !== id));
+      notifyFinopsDataChanged();
+    } catch (e) {
+      setErr(getErrorMessage(e).message);
+    }
+  };
+
+  const handleExportPdf = async (inv: Invoice) => {
+    console.log('handleExportPdf called for invoice:', inv.id);
+    setErr('');
+    setPdfLoadingId(inv.id);
+    try {
+      console.log('Calling downloadInvoicePdf for invoice:', inv.id);
+      const blob = await RealAPI.downloadInvoicePdf(inv.id);
+      console.log('PDF blob received, size:', blob.size, 'type:', blob.type);
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `invoice-${inv.number.replace(/[^\\w.-]+/g, '_')}.pdf`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+      console.log('PDF downloaded successfully');
+    } catch (e) {
+      console.error('Error downloading PDF:', e);
+      setErr(getErrorMessage(e).message);
+    } finally {
+      setPdfLoadingId(null);
+    }
+  };
+
+  const handlePaymentSuggestion = async (inv: Invoice) => {
+    console.log('handlePaymentSuggestion called for invoice:', inv.id);
+    setErr('');
+    setPaymentSuggestionOpen(true);
+    setPaymentSuggestionInvoice(inv);
+    setPaymentSuggestionData(null);
+    setPaymentSuggestionLoading(true);
+    try {
+      console.log('Calling getInvoicePaymentSuggestion for invoice:', inv.id);
+      const result = await RealAPI.getInvoicePaymentSuggestion(inv.id);
+      console.log('Payment suggestion result:', result);
+      setPaymentSuggestionData(result);
+    } catch (e) {
+      console.error('Error getting payment suggestion:', e);
+      setPaymentSuggestionOpen(false);
+      setErr(getErrorMessage(e).message);
+    } finally {
+      setPaymentSuggestionLoading(false);
     }
   };
 
   return (
     <div className="space-y-6">
-      <PageHeader title={t('page.invoices.title', lang)} description={t('page.invoices.desc', lang)}
-        actions={<PrimaryButton onClick={handleAddInvoice} loading={adding} className="px-5 py-2.5 text-sm"><Plus size={16} /> {t('page.invoices.new', lang)}</PrimaryButton>}
+      <PageHeader
+        title={t('page.invoices.title', lang)}
+        description={t('page.invoices.desc', lang)}
+        actions={
+          <div className="flex flex-wrap gap-2">
+            <PrimaryButton onClick={() => setIntakeOpen(true)} variant="outline" className="px-5 py-2.5 text-sm">
+              <BrainCircuit size={16} /> {lang === 'fr' ? 'IA intake' : 'AI intake'}
+            </PrimaryButton>
+            <PrimaryButton onClick={openNew} className="px-5 py-2.5 text-sm">
+              <Plus size={16} /> {t('page.invoices.new', lang)}
+            </PrimaryButton>
+          </div>
+        }
       />
       {err && <ErrorAlert message={err} onDismiss={() => setErr('')} />}
+      {success && <SuccessAlert message={success} onDismiss={() => setSuccess('')} />}
       <Card className="overflow-hidden">
-        {loading ? <div className="p-20 flex justify-center"><Loader2 className="animate-spin text-primary-600" /></div> : (
-          <table className="w-full text-left">
-            <thead className="bg-gray-50 dark:bg-gray-800/50 border-b border-gray-100 dark:border-gray-800">
-              <tr>
-                <th className="px-6 py-3.5 text-xs font-semibold text-gray-500 uppercase tracking-wider">{t('page.invoices.document', lang)}</th>
-                <th className="px-6 py-3.5 text-xs font-semibold text-gray-500 uppercase tracking-wider">{t('page.invoices.client', lang)}</th>
-                <th className="px-6 py-3.5 text-xs font-semibold text-gray-500 uppercase tracking-wider text-right">{t('page.invoices.amount', lang)}</th>
-                <th className="px-6 py-3.5 text-xs font-semibold text-gray-500 uppercase tracking-wider text-right">{t('page.invoices.status', lang)}</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-100 dark:divide-gray-800">
-              {data.map(inv => (
-                <tr key={inv.id} className="hover:bg-gray-50/50 dark:hover:bg-gray-800/30 transition-colors cursor-pointer">
-                  <td className="px-6 py-4">
-                    <p className="font-semibold text-primary-600 text-sm">{inv.number}</p>
-                    <p className="text-xs text-gray-400 mt-0.5">{inv.date}</p>
-                  </td>
-                  <td className="px-6 py-4 font-medium text-sm text-gray-700 dark:text-gray-300">{inv.clientName}</td>
-                  <td className="px-6 py-4 text-right font-bold text-gray-900 dark:text-white">{inv.total.toLocaleString()} €</td>
-                  <td className="px-6 py-4 text-right">
-                    <Badge variant={inv.status === 'Paid' ? 'success' : inv.status === 'Overdue' ? 'danger' : 'warning'}>{invoiceStatusLabel(inv.status, lang)}</Badge>
-                  </td>
+        {loading ? (
+          <div className="p-20 flex justify-center">
+            <Loader2 className="animate-spin text-primary-600" />
+          </div>
+        ) : data.length === 0 ? (
+          <EmptyState
+            icon={<FileText size={32} />}
+            title={t('page.invoices.title', lang)}
+            description={t('page.invoices.desc', lang)}
+            action={
+              <PrimaryButton onClick={openNew} className="px-4 py-2 text-sm">
+                <Plus size={16} /> {t('page.invoices.new', lang)}
+              </PrimaryButton>
+            }
+          />
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-left min-w-[720px]">
+              <thead className="bg-gray-50 dark:bg-gray-800/50 border-b border-gray-100 dark:border-gray-800">
+                <tr>
+                  <th className="px-6 py-3.5 text-xs font-semibold text-gray-500 uppercase tracking-wider">{t('page.invoices.document', lang)}</th>
+                  <th className="px-6 py-3.5 text-xs font-semibold text-gray-500 uppercase tracking-wider">{t('page.invoices.client', lang)}</th>
+                  <th className="px-6 py-3.5 text-xs font-semibold text-gray-500 uppercase tracking-wider text-right">{t('page.invoices.amount', lang)}</th>
+                  <th className="px-6 py-3.5 text-xs font-semibold text-gray-500 uppercase tracking-wider text-right">{t('page.invoices.status', lang)}</th>
+                  <th className="px-6 py-3.5 text-xs font-semibold text-gray-500 uppercase tracking-wider text-right">{t('page.invoices.actions', lang)}</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody className="divide-y divide-gray-100 dark:divide-gray-800">
+                {data.map((inv) => (
+                  <tr key={inv.id} className="hover:bg-gray-50/50 dark:hover:bg-gray-800/30 transition-colors">
+                    <td className="px-6 py-4">
+                      <p className="font-semibold text-primary-600 text-sm">{inv.number}</p>
+                      <p className="text-xs text-gray-400 mt-0.5">{inv.date}</p>
+                    </td>
+                    <td className="px-6 py-4">
+                      <p className="font-medium text-sm text-gray-700 dark:text-gray-300">{inv.clientName}</p>
+                      {inv.clientEmail && <p className="text-xs text-gray-400 truncate max-w-[200px]">{inv.clientEmail}</p>}
+                    </td>
+                    <td className="px-6 py-4 text-right font-bold text-gray-900 dark:text-white">{inv.total.toLocaleString(localeForLang(lang))} €</td>
+                    <td className="px-6 py-4 text-right">
+                      <Badge
+                        variant={
+                          inv.status === 'Paid'
+                            ? 'success'
+                            : inv.status === 'Overdue'
+                              ? 'danger'
+                              : inv.status === 'Draft'
+                                ? 'default'
+                                : 'warning'
+                        }
+                      >
+                        {invoiceStatusLabel(inv.status, lang)}
+                      </Badge>
+                    </td>
+                    <td className="px-6 py-4 text-right">
+                      <div className="flex flex-wrap justify-end gap-1.5">
+                        {inv.status !== 'Paid' && (
+                          <PrimaryButton type="button" variant="outline" className="px-2 py-1 text-[11px]" onClick={() => void handleMarkPaid(inv.id)}>
+                            <CheckCircle2 size={12} /> {t('page.invoices.markPaid', lang)}
+                          </PrimaryButton>
+                        )}
+                        <PrimaryButton type="button" variant="outline" className="px-2 py-1 text-[11px]" onClick={() => void handleExportPdf(inv)} loading={pdfLoadingId === inv.id}>
+                          <Download size={12} /> {t('page.invoices.exportPdf', lang)}
+                        </PrimaryButton>
+                        <PrimaryButton type="button" variant="outline" className="px-2 py-1 text-[11px]" onClick={() => void handlePaymentSuggestion(inv)} loading={paymentSuggestionLoading && paymentSuggestionInvoice?.id === inv.id}>
+                          <BrainCircuit size={12} /> {t('page.invoices.paymentSuggestion', lang)}
+                        </PrimaryButton>
+                        <PrimaryButton type="button" variant="outline" className="px-2 py-1 text-[11px]" onClick={() => openEdit(inv)}>
+                          <Pencil size={12} /> {t('page.invoices.edit', lang)}
+                        </PrimaryButton>
+                        <PrimaryButton type="button" variant="outline" className="px-2 py-1 text-[11px] text-rose-600 border-rose-200" onClick={() => void handleDelete(inv.id)}>
+                          <Trash2 size={12} /> {t('page.invoices.delete', lang)}
+                        </PrimaryButton>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         )}
+      </Card>
+
+      {intakeOpen && (
+        <div
+          className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm"
+          role="dialog"
+          aria-modal="true"
+        >
+          <Card className="w-full max-w-5xl p-6 shadow-2xl max-h-[92vh] overflow-y-auto">
+            <div className="flex items-start justify-between gap-3 mb-5">
+              <div>
+                <h3 className="font-bold text-lg text-gray-900 dark:text-white">
+                  Smart Invoice / Receipt Intake
+                </h3>
+                <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
+                  {lang === 'fr'
+                    ? 'Collez le texte issu d’un PDF, d’un email, d’un OCR ou d’un reçu pour générer un brouillon.'
+                    : 'Paste text from a PDF, email, OCR export, or receipt to generate a draft.'}
+                </p>
+              </div>
+              <button
+                type="button"
+                className="p-1.5 rounded-lg text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors shrink-0"
+                onClick={closeIntake}
+                aria-label={t('page.invoices.cancel', lang)}
+              >
+                <X size={20} />
+              </button>
+            </div>
+
+            <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
+              <div className="space-y-4">
+                <SelectField
+                  label={lang === 'fr' ? 'Type de document' : 'Document type'}
+                  value={intakeDocumentType}
+                  onChange={(v) => setIntakeDocumentType(v as 'auto' | 'invoice' | 'receipt')}
+                  options={[
+                    { value: 'auto', label: lang === 'fr' ? 'Détection auto' : 'Auto detect' },
+                    { value: 'invoice', label: lang === 'fr' ? 'Facture' : 'Invoice' },
+                    { value: 'receipt', label: lang === 'fr' ? 'Reçu / dépense' : 'Receipt / expense' },
+                  ]}
+                />
+                <div className="space-y-1.5">
+                  <label className="block text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider">
+                    {lang === 'fr' ? 'Texte du document' : 'Document text'}
+                  </label>
+                  <textarea
+                    value={intakeSourceText}
+                    onChange={(e) => setIntakeSourceText(e.target.value)}
+                    placeholder={
+                      lang === 'fr'
+                        ? 'Exemple : ACME Corp, Invoice #1234, Bill To..., Total 1 250,00 EUR...'
+                        : 'Example: ACME Corp, Invoice #1234, Bill To..., Total 1,250.00 EUR...'
+                    }
+                    className="w-full min-h-[320px] px-4 py-3.5 rounded-xl bg-gray-50 dark:bg-gray-800/80 border border-gray-200 dark:border-gray-700 focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 outline-none font-medium text-gray-900 dark:text-white placeholder-gray-400 transition-all"
+                  />
+                </div>
+                <div className="flex gap-2">
+                  <PrimaryButton type="button" className="px-4 py-2.5 text-sm" onClick={() => void analyzeSmartIntake()} loading={intakeLoading}>
+                    <BrainCircuit size={16} /> {lang === 'fr' ? 'Analyser' : 'Analyze'}
+                  </PrimaryButton>
+                  <PrimaryButton type="button" variant="outline" className="px-4 py-2.5 text-sm" onClick={closeIntake} disabled={intakeLoading || intakeApplying}>
+                    {t('page.invoices.cancel', lang)}
+                  </PrimaryButton>
+                </div>
+              </div>
+
+              <div className="space-y-4">
+                {intakeResult ? (
+                  <>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Badge variant="info">{intakeResult.detectedType}</Badge>
+                      <Badge variant={intakeResult.confidenceScore >= 75 ? 'success' : intakeResult.confidenceScore >= 55 ? 'warning' : 'danger'}>
+                        {Math.round(intakeResult.confidenceScore)}% {lang === 'fr' ? 'confiance' : 'confidence'}
+                      </Badge>
+                    </div>
+
+                    <Card className="p-4">
+                      <p className="text-sm font-semibold text-gray-900 dark:text-white mb-2">
+                        {lang === 'fr' ? 'Résumé IA' : 'AI summary'}
+                      </p>
+                      <p className="text-sm text-gray-600 dark:text-gray-300">{intakeResult.summary}</p>
+                    </Card>
+
+                    {intakeResult.warnings.length > 0 && (
+                      <Card className="p-4 border-amber-200 dark:border-amber-900/50 bg-amber-50/50 dark:bg-amber-950/20">
+                        <p className="text-sm font-semibold text-amber-900 dark:text-amber-100 mb-2">
+                          {lang === 'fr' ? 'Points à vérifier' : 'Review points'}
+                        </p>
+                        <ul className="space-y-2 text-sm text-amber-800 dark:text-amber-200">
+                          {intakeResult.warnings.map((warning, index) => (
+                            <li key={index}>- {warning}</li>
+                          ))}
+                        </ul>
+                      </Card>
+                    )}
+
+                    {intakeResult.invoiceDraft && (
+                      <Card className="p-4">
+                        <div className="flex items-center justify-between gap-3 mb-3">
+                          <p className="text-sm font-semibold text-gray-900 dark:text-white">
+                            {lang === 'fr' ? 'Brouillon de facture' : 'Invoice draft'}
+                          </p>
+                          {intakeResult.blockingFields.length > 0 && (
+                            <Badge variant="warning">{lang === 'fr' ? 'Vérification requise' : 'Needs review'}</Badge>
+                          )}
+                        </div>
+                        <div className="grid grid-cols-2 gap-3 text-sm">
+                          <div>
+                            <p className="text-gray-500 dark:text-gray-400">{lang === 'fr' ? 'Numéro' : 'Number'}</p>
+                            <p className="font-medium text-gray-900 dark:text-white">{intakeResult.invoiceDraft.number}</p>
+                          </div>
+                          <div>
+                            <p className="text-gray-500 dark:text-gray-400">{lang === 'fr' ? 'Client' : 'Client'}</p>
+                            <p className="font-medium text-gray-900 dark:text-white">{intakeResult.invoiceDraft.clientName || '—'}</p>
+                          </div>
+                          <div>
+                            <p className="text-gray-500 dark:text-gray-400">{lang === 'fr' ? 'Date' : 'Date'}</p>
+                            <p className="font-medium text-gray-900 dark:text-white">{intakeResult.invoiceDraft.date}</p>
+                          </div>
+                          <div>
+                            <p className="text-gray-500 dark:text-gray-400">{lang === 'fr' ? 'Échéance' : 'Due date'}</p>
+                            <p className="font-medium text-gray-900 dark:text-white">{intakeResult.invoiceDraft.dueDate}</p>
+                          </div>
+                          <div className="col-span-2">
+                            <p className="text-gray-500 dark:text-gray-400">{lang === 'fr' ? 'Total' : 'Total'}</p>
+                            <p className="font-semibold text-lg text-gray-900 dark:text-white">
+                              {intakeResult.invoiceDraft.total.toLocaleString(localeForLang(lang))} €
+                            </p>
+                          </div>
+                        </div>
+                        {intakeResult.invoiceDraft.lineItems.length > 0 && (
+                          <div className="mt-4 space-y-2">
+                            <p className="text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">
+                              {lang === 'fr' ? 'Lignes détectées' : 'Detected line items'}
+                            </p>
+                            {intakeResult.invoiceDraft.lineItems.slice(0, 3).map((line, index) => (
+                              <div key={index} className="rounded-xl bg-gray-50 dark:bg-gray-800/60 px-3 py-2 text-sm text-gray-700 dark:text-gray-200">
+                                <div className="flex items-center justify-between gap-3">
+                                  <span className="font-medium">{line.description}</span>
+                                  <span>{line.lineTotal.toLocaleString(localeForLang(lang))} €</span>
+                                </div>
+                                <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                                  {line.quantity} × {line.unitPrice.toLocaleString(localeForLang(lang))} €
+                                </p>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                        <div className="mt-4">
+                          <PrimaryButton
+                            type="button"
+                            className="w-full py-2.5 text-sm"
+                            onClick={() => void createInvoiceDraftFromIntake()}
+                            loading={intakeApplying}
+                            disabled={intakeResult.blockingFields.length > 0}
+                          >
+                            <FileText size={16} /> {lang === 'fr' ? 'Créer le brouillon de facture' : 'Create draft invoice'}
+                          </PrimaryButton>
+                        </div>
+                      </Card>
+                    )}
+
+                    {intakeResult.expenseDraft && (
+                      <Card className="p-4">
+                        <div className="flex items-center justify-between gap-3 mb-3">
+                          <p className="text-sm font-semibold text-gray-900 dark:text-white">
+                            {lang === 'fr' ? 'Brouillon de dépense' : 'Expense draft'}
+                          </p>
+                          <Badge variant="default">{intakeResult.expenseDraft.category}</Badge>
+                        </div>
+                        <div className="grid grid-cols-2 gap-3 text-sm">
+                          <div>
+                            <p className="text-gray-500 dark:text-gray-400">{lang === 'fr' ? 'Montant' : 'Amount'}</p>
+                            <p className="font-semibold text-lg text-gray-900 dark:text-white">
+                              {intakeResult.expenseDraft.amount.toLocaleString(localeForLang(lang))} €
+                            </p>
+                          </div>
+                          <div>
+                            <p className="text-gray-500 dark:text-gray-400">{lang === 'fr' ? 'Date' : 'Date'}</p>
+                            <p className="font-medium text-gray-900 dark:text-white">{intakeResult.expenseDraft.expenseDate}</p>
+                          </div>
+                          <div className="col-span-2">
+                            <p className="text-gray-500 dark:text-gray-400">{lang === 'fr' ? 'Fournisseur' : 'Vendor'}</p>
+                            <p className="font-medium text-gray-900 dark:text-white">{intakeResult.expenseDraft.vendor || '—'}</p>
+                          </div>
+                        </div>
+                        <div className="mt-4">
+                          <PrimaryButton
+                            type="button"
+                            className="w-full py-2.5 text-sm"
+                            onClick={() => void createExpenseFromIntake()}
+                            loading={intakeApplying}
+                            disabled={intakeResult.blockingFields.length > 0}
+                          >
+                            <Receipt size={16} /> {lang === 'fr' ? 'Créer la dépense' : 'Create expense entry'}
+                          </PrimaryButton>
+                        </div>
+                      </Card>
+                    )}
+
+                    {intakeResult.missingFields.length > 0 && (
+                      <Card className="p-4">
+                        <p className="text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400 mb-2">
+                          {lang === 'fr' ? 'Champs manquants ou inférés' : 'Missing or inferred fields'}
+                        </p>
+                        <div className="flex flex-wrap gap-2">
+                          {intakeResult.missingFields.map((field) => (
+                            <Badge key={field} variant={intakeResult.blockingFields.includes(field) ? 'danger' : 'warning'}>
+                              {field}
+                            </Badge>
+                          ))}
+                        </div>
+                      </Card>
+                    )}
+
+                    <Card className="p-4">
+                      <p className="text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400 mb-2">
+                        {lang === 'fr' ? 'Aperçu normalisé' : 'Normalized preview'}
+                      </p>
+                      <pre className="max-h-[180px] overflow-auto whitespace-pre-wrap text-xs text-gray-600 dark:text-gray-300">
+                        {intakeResult.normalizedTextPreview}
+                      </pre>
+                    </Card>
+                  </>
+                ) : (
+                  <div className="h-full min-h-[320px] flex items-center justify-center rounded-2xl border border-dashed border-gray-200 dark:border-gray-800 bg-gray-50/80 dark:bg-gray-900/40">
+                    <div className="text-center px-6">
+                      <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-2xl bg-primary-50 text-primary-600 dark:bg-primary-950/40">
+                        <BrainCircuit size={22} />
+                      </div>
+                      <p className="font-semibold text-gray-900 dark:text-white">
+                        {lang === 'fr' ? 'Le brouillon IA apparaîtra ici' : 'Your AI draft will appear here'}
+                      </p>
+                      <p className="mt-2 text-sm text-gray-500 dark:text-gray-400">
+                        {lang === 'fr'
+                          ? 'Lancez l’analyse pour extraire un brouillon de facture ou de dépense.'
+                          : 'Run the intake to extract an invoice or expense draft.'}
+                      </p>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          </Card>
+        </div>
+      )}
+
+      {paymentSuggestionOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+          <div className="w-full max-w-2xl rounded-[28px] bg-white dark:bg-gray-950 shadow-2xl overflow-hidden">
+            <div className="flex items-start justify-between gap-4 border-b border-gray-200 dark:border-gray-800 px-6 py-5">
+              <div>
+                <h3 className="text-lg font-semibold text-gray-900 dark:text-white">{t('page.invoices.suggestionTitle', lang)}</h3>
+                <p className="text-sm text-gray-500">{paymentSuggestionInvoice?.number}</p>
+              </div>
+              <button type="button" onClick={() => setPaymentSuggestionOpen(false)} className="rounded-full p-2 text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-800 dark:text-gray-400">
+                <X size={18} />
+              </button>
+            </div>
+            <div className="p-6 space-y-5">
+              {paymentSuggestionLoading ? (
+                <div className="py-16 flex justify-center">
+                  <Loader2 className="animate-spin text-primary-600" />
+                </div>
+              ) : paymentSuggestionData ? (
+                <div className="space-y-5">
+                  <div className="rounded-3xl bg-gray-50 dark:bg-gray-900/80 border border-gray-100 dark:border-gray-800 p-5">
+                    <p className="text-sm font-semibold text-gray-900 dark:text-white">{paymentSuggestionData.recommendationType}</p>
+                    {paymentSuggestionData.suggestedTerms ? (
+                      <p className="mt-2 text-sm text-gray-500 dark:text-gray-400">{paymentSuggestionData.suggestedTerms}</p>
+                    ) : null}
+                  </div>
+                  <div className="grid gap-4 md:grid-cols-2">
+                    <div className="rounded-3xl bg-gray-50 dark:bg-gray-900/80 border border-gray-100 dark:border-gray-800 p-5">
+                      <p className="text-xs uppercase tracking-wide text-gray-500">{t('page.invoices.paymentSuggestion', lang)}</p>
+                      <ul className="mt-3 space-y-2 text-sm text-gray-700 dark:text-gray-200">
+                        {paymentSuggestionData.chunkAmounts.map((amount, index) => (
+                          <li key={index} className="flex items-center justify-between gap-2">
+                            <span className="font-semibold">{index + 1}.</span>
+                            <span>{amount.toLocaleString(localeForLang(lang))} €</span>
+                            <span className="text-gray-400 dark:text-gray-500">{paymentSuggestionData.proposedDates[index]}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                    <div className="rounded-3xl bg-gray-50 dark:bg-gray-900/80 border border-gray-100 dark:border-gray-800 p-5">
+                      <p className="text-xs uppercase tracking-wide text-gray-500">{t('page.invoices.suggestionConfidence', lang)}</p>
+                      <p className="mt-3 text-2xl font-bold text-gray-900 dark:text-white">{Math.round(paymentSuggestionData.confidenceScore * 100)}%</p>
+                      {paymentSuggestionData.explanation ? (
+                        <p className="mt-4 text-sm text-gray-500 dark:text-gray-400">{paymentSuggestionData.explanation}</p>
+                      ) : null}
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <p className="text-sm text-gray-500">{t('page.invoices.suggestionPending', lang)}</p>
+              )}
+            </div>
+            <div className="flex justify-end gap-3 border-t border-gray-200 dark:border-gray-800 px-6 py-4">
+              <PrimaryButton type="button" variant="outline" onClick={() => setPaymentSuggestionOpen(false)}>
+                {t('page.invoices.close', lang)}
+              </PrimaryButton>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {modalOpen && (
+        <div
+          className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm"
+          role="dialog"
+          aria-modal="true"
+        >
+          <Card className="w-full max-w-lg p-6 shadow-2xl">
+            <div className="flex items-start justify-between gap-3 mb-4">
+              <h3 className="font-bold text-lg text-gray-900 dark:text-white">
+                {editingId ? t('page.invoices.modalEdit', lang) : t('page.invoices.modalNew', lang)}
+              </h3>
+              <button
+                type="button"
+                className="p-1.5 rounded-lg text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors shrink-0"
+                onClick={() => !saving && setModalOpen(false)}
+                aria-label={t('page.invoices.cancel', lang)}
+              >
+                <X size={20} />
+              </button>
+            </div>
+            <form noValidate onSubmit={(e) => void submitInvoice(e)} className="space-y-4">
+              <InputField label={t('page.invoices.numberLabel', lang)} value={form.number} onChange={(v) => setForm({ ...form, number: v })} required />
+              <label className="flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={form.linkCrm}
+                  onChange={(e) => setForm({ ...form, linkCrm: e.target.checked })}
+                  className="rounded border-gray-300"
+                />
+                {t('page.invoices.linkCrm', lang)}
+              </label>
+              {form.linkCrm ? (
+                <SelectField label={t('page.invoices.pickClient', lang)} value={form.clientId} onChange={(v) => setForm({ ...form, clientId: v })} options={clientSelectOptions} required />
+              ) : (
+                <>
+                  <InputField label={t('page.invoices.client', lang)} value={form.clientName} onChange={(v) => setForm({ ...form, clientName: v })} required />
+                  <InputField label={t('common.email', lang)} value={form.clientEmail} onChange={(v) => setForm({ ...form, clientEmail: v })} type="email" />
+                </>
+              )}
+              <div className="grid grid-cols-2 gap-3">
+                <InputField label={t('page.invoices.issueDate', lang)} value={form.date} onChange={(v) => setForm({ ...form, date: v })} type="date" required />
+                <InputField label={t('page.invoices.dueDate', lang)} value={form.dueDate} onChange={(v) => setForm({ ...form, dueDate: v })} type="date" required />
+              </div>
+              <InputField label={t('page.invoices.amount', lang)} value={form.total} onChange={(v) => setForm({ ...form, total: v })} required />
+              <SelectField label={t('page.invoices.status', lang)} value={form.status} onChange={(v) => setForm({ ...form, status: v as Invoice['status'] })} options={invStatusOptions} required />
+              <div className="flex gap-2 pt-2">
+                <PrimaryButton type="submit" loading={saving} className="flex-1 py-2.5 text-sm">
+                  {t('page.invoices.save', lang)}
+                </PrimaryButton>
+                <PrimaryButton type="button" variant="outline" className="py-2.5 text-sm" onClick={() => setModalOpen(false)} disabled={saving}>
+                  {t('page.invoices.cancel', lang)}
+                </PrimaryButton>
+              </div>
+            </form>
+          </Card>
+        </div>
+      )}
+    </div>
+  );
+};
+
+/* ================================================================
+   AI EXPENSE COMPONENTS
+   ================================================================ */
+
+const ExpenseForecastPanel: React.FC<{ lang: UiLang; companyId: string; onClose: () => void }> = ({ lang, companyId, onClose }) => {
+  const [forecast, setForecast] = useState<AiExpenseForecastResponse | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    const loadForecast = async () => {
+      setLoading(true);
+      setError('');
+      try {
+        const result = await RealAPI.getExpenseForecast({ companyId });
+        setForecast(result);
+      } catch (e) {
+        setError(getErrorMessage(e).message);
+      } finally {
+        setLoading(false);
+      }
+    };
+    void loadForecast();
+  }, [companyId]);
+
+  return (
+    <div
+      className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm"
+      role="dialog"
+      aria-modal="true"
+    >
+      <Card className="w-full max-w-2xl p-6 shadow-2xl max-h-[90vh] overflow-y-auto">
+        <div className="flex items-start justify-between gap-3 mb-6">
+          <div>
+            <h3 className="font-bold text-xl text-gray-900 dark:text-white">
+              {t('ai.expense.forecast.title', lang)}
+            </h3>
+            <p className="text-sm text-gray-500 mt-1">
+              Prévision des dépenses basée sur l'historique
+            </p>
+          </div>
+          <button
+            type="button"
+            className="p-1.5 rounded-lg text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors shrink-0"
+            onClick={onClose}
+            aria-label="Close"
+          >
+            <X size={20} />
+          </button>
+        </div>
+
+        {error && <ErrorAlert message={error} onDismiss={() => setError('')} />}
+
+        {loading ? (
+          <div className="flex justify-center py-12">
+            <Loader2 className="animate-spin text-primary-600" size={32} />
+            <span className="ml-3 text-gray-600">{t('ai.expense.forecast.loading', lang)}</span>
+          </div>
+        ) : forecast ? (
+          <div className="space-y-6">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <Card className="p-4">
+                <div className="text-center">
+                  <div className="text-2xl font-bold text-blue-600 mb-1">
+                    {forecast.predictedAmount.toLocaleString(localeForLang(lang))} €
+                  </div>
+                  <div className="text-sm text-gray-500">
+                    {t('ai.expense.forecast.predictedAmount', lang)}
+                  </div>
+                </div>
+              </Card>
+              <Card className="p-4">
+                <div className="text-center">
+                  <div className="text-2xl font-bold text-green-600 mb-1">
+                    {forecast.confidenceScore}%
+                  </div>
+                  <div className="text-sm text-gray-500">
+                    {t('ai.expense.forecast.confidence', lang)}
+                  </div>
+                </div>
+              </Card>
+              <Card className="p-4">
+                <div className="text-center">
+                  <div className="text-2xl font-bold text-purple-600 mb-1">
+                    {forecast.trend === 'increasing' ? '↗️' : forecast.trend === 'decreasing' ? '↘️' : '➡️'}
+                  </div>
+                  <div className="text-sm text-gray-500">
+                    {t('ai.expense.forecast.trend', lang)}
+                  </div>
+                  <div className="text-xs text-gray-400 mt-1">
+                    {t(`ai.expense.forecast.trend.${forecast.trend}`, lang)}
+                  </div>
+                </div>
+              </Card>
+            </div>
+
+            <Card className="p-4">
+              <h4 className="font-semibold text-gray-900 dark:text-white mb-2">
+                {t('ai.expense.forecast.explanation', lang)}
+              </h4>
+              <p className="text-sm text-gray-600 dark:text-gray-300">
+                {forecast.explanation}
+              </p>
+            </Card>
+          </div>
+        ) : (
+          <div className="text-center py-12">
+            <p className="text-gray-500">{t('ai.expense.forecast.unavailable', lang)}</p>
+          </div>
+        )}
+
+        <div className="flex justify-end mt-6">
+          <PrimaryButton onClick={onClose} variant="outline">
+            Fermer
+          </PrimaryButton>
+        </div>
+      </Card>
+    </div>
+  );
+};
+
+const ExpenseAlertsPanel: React.FC<{ lang: UiLang; companyId: string; onClose: () => void }> = ({ lang, companyId, onClose }) => {
+  const [alerts, setAlerts] = useState<AiExpenseAlertResponse[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    const loadAlerts = async () => {
+      setLoading(true);
+      setError('');
+      try {
+        const result = await RealAPI.getExpenseAlerts({ companyId });
+        setAlerts(result);
+      } catch (e) {
+        setError(getErrorMessage(e).message);
+      } finally {
+        setLoading(false);
+      }
+    };
+    void loadAlerts();
+  }, [companyId]);
+
+  const getAlertLevelColor = (level: string) => {
+    switch (level) {
+      case 'critical': return 'text-red-600 bg-red-50 border-red-200';
+      case 'high': return 'text-orange-600 bg-orange-50 border-orange-200';
+      case 'medium': return 'text-yellow-600 bg-yellow-50 border-yellow-200';
+      case 'low': return 'text-blue-600 bg-blue-50 border-blue-200';
+      default: return 'text-gray-600 bg-gray-50 border-gray-200';
+    }
+  };
+
+  return (
+    <div
+      className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm"
+      role="dialog"
+      aria-modal="true"
+    >
+      <Card className="w-full max-w-4xl p-6 shadow-2xl max-h-[90vh] overflow-y-auto">
+        <div className="flex items-start justify-between gap-3 mb-6">
+          <div>
+            <h3 className="font-bold text-xl text-gray-900 dark:text-white">
+              {t('ai.alerts.title', lang)}
+            </h3>
+            <p className="text-sm text-gray-500 mt-1">
+              Alertes sur les dépenses anormales détectées par IA
+            </p>
+          </div>
+          <button
+            type="button"
+            className="p-1.5 rounded-lg text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors shrink-0"
+            onClick={onClose}
+            aria-label="Close"
+          >
+            <X size={20} />
+          </button>
+        </div>
+
+        {error && <ErrorAlert message={error} onDismiss={() => setError('')} />}
+
+        {loading ? (
+          <div className="flex justify-center py-12">
+            <Loader2 className="animate-spin text-primary-600" size={32} />
+            <span className="ml-3 text-gray-600">{t('ai.alerts.loading', lang)}</span>
+          </div>
+        ) : alerts.length === 0 ? (
+          <div className="text-center py-12">
+            <div className="text-green-600 mb-4">
+              <CheckCircle2 size={48} className="mx-auto" />
+            </div>
+            <p className="text-gray-600">{t('ai.alerts.noAlerts', lang)}</p>
+          </div>
+        ) : (
+          <div className="space-y-4">
+            {alerts.map((alert) => (
+              <Card key={alert.expenseId} className={`p-4 border-l-4 ${getAlertLevelColor(alert.alertLevel)}`}>
+                <div className="flex items-start justify-between gap-4">
+                  <div className="flex-1">
+                    <div className="flex items-center gap-2 mb-2">
+                      <Badge variant={alert.alertLevel === 'critical' ? 'danger' : alert.alertLevel === 'high' ? 'warning' : 'default'}>
+                        {t(`ai.alerts.level.${alert.alertLevel}`, lang)}
+                      </Badge>
+                      <span className="text-sm text-gray-500">
+                        Score: {alert.riskScore}/100
+                      </span>
+                      <span className="text-sm font-medium text-gray-700 dark:text-gray-300">
+                        {alert.amount.toLocaleString(localeForLang(lang))} €
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-4 mb-3 text-xs text-gray-500">
+                      <span>📁 {alert.category}</span>
+                      {alert.vendor && <span>🏪 {alert.vendor}</span>}
+                      <span>📅 {new Date(alert.expenseDate).toLocaleDateString(localeForLang(lang))}</span>
+                    </div>
+                    <h4 className="font-semibold text-gray-900 dark:text-white mb-2">
+                      {t('ai.alerts.reason', lang)}
+                    </h4>
+                    <p className="text-sm text-gray-600 dark:text-gray-300 mb-3">
+                      {alert.reason}
+                    </p>
+                    <h4 className="font-semibold text-gray-900 dark:text-white mb-2">
+                      {t('ai.alerts.recommendation', lang)}
+                    </h4>
+                    <p className="text-sm text-gray-600 dark:text-gray-300">
+                      {alert.recommendation}
+                    </p>
+                  </div>
+                  <div className="text-xs text-gray-400">
+                    Détecté: {new Date(alert.detectedAt).toLocaleDateString(localeForLang(lang))}
+                  </div>
+                </div>
+              </Card>
+            ))}
+          </div>
+        )}
+
+        <div className="flex justify-end mt-6">
+          <PrimaryButton onClick={onClose} variant="outline">
+            Fermer
+          </PrimaryButton>
+        </div>
       </Card>
     </div>
   );
@@ -3268,77 +4878,267 @@ const AdminInvoicesView: React.FC<{ lang: UiLang }> = ({ lang }) => {
    ADMIN - EXPENSES
    ================================================================ */
 
-const AdminExpensesView: React.FC<{ lang: UiLang }> = ({ lang }) => {
+const AdminExpensesView: React.FC<{ user: User; lang: UiLang }> = ({ user, lang }) => {
   const [data, setData] = useState<Expense[]>([]);
-  const [adding, setAdding] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [modalOpen, setModalOpen] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [forecastPanelOpen, setForecastPanelOpen] = useState(false);
+  const [alertsPanelOpen, setAlertsPanelOpen] = useState(false);
+  const [form, setForm] = useState({
+    amount: '',
+    expenseDate: new Date().toISOString().slice(0, 10),
+    category: 'auto',
+    vendor: '',
+    notes: '',
+  });
 
   const mapBackendExpenseToUi = (exp: ExpenseBackend): Expense => ({
     id: exp.id,
-    description: exp.vendor || exp.notes || 'Expense',
+    description: exp.vendor || exp.notes || t('page.expenses.title', lang),
     category: exp.category,
     amount: Number(exp.amount),
-    date: exp.expenseDate,
+    date: typeof exp.expenseDate === 'string' ? exp.expenseDate.slice(0, 10) : String(exp.expenseDate).slice(0, 10),
     status: 'Approved',
-    reportedBy: 'System',
+    reportedBy: exp.createdBy ? `${exp.createdBy.slice(0, 8)}…` : '—',
+    notes: exp.notes,
+    createdBy: exp.createdBy,
   });
 
-  useEffect(() => {
-    const load = async () => {
-      try {
-        const rows = await RealAPI.getExpenses();
-        setData(rows.map(mapBackendExpenseToUi));
-      } catch (e) {
-        const { message } = getErrorMessage(e);
-        setError(message);
-      }
-    };
-    void load();
-  }, []);
+  const categoryOptions = useMemo(
+    () => [
+      { value: 'auto', label: t('page.expenses.categoryAuto', lang) },
+      { value: 'Software', label: 'Software' },
+      { value: 'Travel', label: 'Travel' },
+      { value: 'Office', label: 'Office' },
+      { value: 'Marketing', label: 'Marketing' },
+      { value: 'Other', label: 'Other' },
+    ],
+    [lang],
+  );
 
-  const handleAddExpense = async () => {
-    if (adding) return;
-    setAdding(true);
+  const load = async () => {
+    setLoading(true);
     setError('');
     try {
-      const expense = await RealAPI.createExpense({
-        amount: 250,
-        expenseDate: new Date().toISOString().slice(0, 10),
-        category: 'auto',
-        vendor: 'AWS',
-        notes: 'Auto generated expense for AI categorization flow',
-      });
-      setData((prev) => [mapBackendExpenseToUi(expense), ...prev]);
+      const rows = await RealAPI.getExpenses();
+      setData(rows.map(mapBackendExpenseToUi));
     } catch (e) {
-      const { message } = getErrorMessage(e);
-      setError(message);
+      setError(getErrorMessage(e).message);
     } finally {
-      setAdding(false);
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    void load();
+  }, [user.activeCompanyId, user.companyId]);
+
+  const openNew = () => {
+    setEditingId(null);
+    setForm({
+      amount: '',
+      expenseDate: new Date().toISOString().slice(0, 10),
+      category: 'auto',
+      vendor: '',
+      notes: '',
+    });
+    setModalOpen(true);
+  };
+
+  const openEdit = async (exp: Expense) => {
+    setError('');
+    try {
+      const raw = await RealAPI.getExpense(exp.id);
+      setEditingId(exp.id);
+      setForm({
+        amount: String(raw.amount),
+        expenseDate: (typeof raw.expenseDate === 'string' ? raw.expenseDate : String(raw.expenseDate)).slice(0, 10),
+        category: raw.category,
+        vendor: raw.vendor || '',
+        notes: raw.notes || '',
+      });
+      setModalOpen(true);
+    } catch (e) {
+      setError(getErrorMessage(e).message);
+    }
+  };
+
+  const submitExpense = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const amount = parseFloat(form.amount.replace(',', '.'));
+    if (!Number.isFinite(amount) || amount <= 0) {
+      setError(t('page.expenses.errAmount', lang));
+      return;
+    }
+    setSaving(true);
+    setError('');
+    try {
+      const payload = {
+        amount,
+        expenseDate: form.expenseDate,
+        category: form.category || 'auto',
+        vendor: form.vendor.trim() || undefined,
+        notes: form.notes.trim() || undefined,
+      };
+      if (editingId) {
+        const row = await RealAPI.updateExpense(editingId, payload);
+        setData((prev) => prev.map((x) => (x.id === editingId ? mapBackendExpenseToUi(row) : x)));
+      } else {
+        const row = await RealAPI.createExpense(payload);
+        setData((prev) => [mapBackendExpenseToUi(row), ...prev]);
+      }
+      notifyFinopsDataChanged();
+      setModalOpen(false);
+    } catch (e) {
+      setError(getErrorMessage(e).message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleDelete = async (id: string) => {
+    if (!window.confirm(t('page.expenses.deleteConfirm', lang))) return;
+    setError('');
+    try {
+      await RealAPI.deleteExpense(id);
+      setData((prev) => prev.filter((x) => x.id !== id));
+      notifyFinopsDataChanged();
+    } catch (e) {
+      setError(getErrorMessage(e).message);
     }
   };
 
   return (
     <div className="space-y-6">
-      <PageHeader title={t('page.expenses.title', lang)} description={t('page.expenses.desc', lang)}
-        actions={<PrimaryButton onClick={handleAddExpense} loading={adding} className="px-5 py-2.5 text-sm"><Plus size={16} /> Enregistrer</PrimaryButton>}
+      <PageHeader
+        title={t('page.expenses.title', lang)}
+        description={t('page.expenses.desc', lang)}
+        actions={
+          <div className="flex gap-2">
+            <PrimaryButton onClick={() => setForecastPanelOpen(true)} variant="outline" className="px-4 py-2.5 text-sm">
+              <BrainCircuit size={16} /> {t('page.expenses.aiForecast', lang)}
+            </PrimaryButton>
+            <PrimaryButton onClick={() => setAlertsPanelOpen(true)} variant="outline" className="px-4 py-2.5 text-sm">
+              <AlertCircle size={16} /> {t('page.expenses.aiAlerts', lang)}
+            </PrimaryButton>
+            <PrimaryButton onClick={openNew} className="px-5 py-2.5 text-sm">
+              <Plus size={16} /> {t('page.expenses.add', lang)}
+            </PrimaryButton>
+          </div>
+        }
       />
       {error && <ErrorAlert message={error} onDismiss={() => setError('')} />}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-        {data.map(exp => (
-          <Card key={exp.id} hover className="p-6">
-            <div className="flex items-center justify-between mb-4">
-              <div className="p-2.5 bg-rose-50 dark:bg-rose-900/20 rounded-xl text-rose-500"><Receipt size={20} /></div>
-              <Badge>{exp.category}</Badge>
+      {loading ? (
+        <div className="flex justify-center py-20">
+          <Loader2 className="animate-spin text-primary-600" size={32} />
+        </div>
+      ) : data.length === 0 ? (
+        <EmptyState
+          icon={<Receipt size={32} />}
+          title={t('page.expenses.title', lang)}
+          description={t('page.expenses.desc', lang)}
+          action={
+            <PrimaryButton onClick={openNew} className="px-4 py-2 text-sm">
+              <Plus size={16} /> {t('page.expenses.add', lang)}
+            </PrimaryButton>
+          }
+        />
+      ) : (
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+          {data.map((exp) => (
+            <Card key={exp.id} className="p-6">
+              <div className="flex items-center justify-between mb-4">
+                <div className="p-2.5 bg-rose-50 dark:bg-rose-900/20 rounded-xl text-rose-500">
+                  <Receipt size={20} />
+                </div>
+                <Badge>{exp.category}</Badge>
+              </div>
+              <h3 className="font-bold text-gray-900 dark:text-white mb-1">{exp.description}</h3>
+              <p className="text-xs text-gray-500 mb-4">
+                {exp.reportedBy} • {exp.date}
+              </p>
+              {exp.notes && <p className="text-xs text-gray-400 mb-3 line-clamp-2">{exp.notes}</p>}
+              <div className="pt-4 border-t border-gray-100 dark:border-gray-800 flex justify-between items-center mb-3">
+                <span className="text-xl font-bold text-rose-500">-{exp.amount.toLocaleString(localeForLang(lang))} €</span>
+                <Badge variant="success">{exp.status}</Badge>
+              </div>
+              <div className="flex flex-wrap gap-1.5">
+                <PrimaryButton type="button" variant="outline" className="px-2 py-1 text-[11px] flex-1" onClick={() => void openEdit(exp)}>
+                  <Pencil size={12} /> {t('page.expenses.edit', lang)}
+                </PrimaryButton>
+                <PrimaryButton
+                  type="button"
+                  variant="outline"
+                  className="px-2 py-1 text-[11px] flex-1 text-rose-600 border-rose-200"
+                  onClick={() => void handleDelete(exp.id)}
+                >
+                  <Trash2 size={12} /> {t('page.expenses.delete', lang)}
+                </PrimaryButton>
+              </div>
+            </Card>
+          ))}
+        </div>
+      )}
+
+      {modalOpen && (
+        <div
+          className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm"
+          role="dialog"
+          aria-modal="true"
+        >
+          <Card className="w-full max-w-md p-6 shadow-2xl">
+            <div className="flex items-start justify-between gap-3 mb-4">
+              <h3 className="font-bold text-lg text-gray-900 dark:text-white">
+                {editingId ? t('page.expenses.modalEdit', lang) : t('page.expenses.modalNew', lang)}
+              </h3>
+              <button
+                type="button"
+                className="p-1.5 rounded-lg text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors shrink-0"
+                onClick={() => !saving && setModalOpen(false)}
+                aria-label={t('page.invoices.cancel', lang)}
+              >
+                <X size={20} />
+              </button>
             </div>
-            <h3 className="font-bold text-gray-900 dark:text-white mb-1">{exp.description}</h3>
-            <p className="text-xs text-gray-500 mb-4">{exp.reportedBy} • {exp.date}</p>
-            <div className="pt-4 border-t border-gray-100 dark:border-gray-800 flex justify-between items-center">
-              <span className="text-xl font-bold text-rose-500">-{exp.amount} €</span>
-              <Badge variant={exp.status === 'Approved' ? 'success' : exp.status === 'Rejected' ? 'danger' : 'warning'}>{exp.status}</Badge>
-            </div>
+            <form noValidate onSubmit={(e) => void submitExpense(e)} className="space-y-4">
+              <InputField label={t('page.invoices.amount', lang)} value={form.amount} onChange={(v) => setForm({ ...form, amount: v })} required />
+              <InputField label={t('page.invoices.issueDate', lang)} value={form.expenseDate} onChange={(v) => setForm({ ...form, expenseDate: v })} type="date" required />
+              <SelectField label={t('page.expenses.categoryField', lang)} value={form.category} onChange={(v) => setForm({ ...form, category: v })} options={categoryOptions} required />
+              <InputField label={t('page.expenses.vendor', lang)} value={form.vendor} onChange={(v) => setForm({ ...form, vendor: v })} />
+              <InputField label={t('page.expenses.notes', lang)} value={form.notes} onChange={(v) => setForm({ ...form, notes: v })} />
+              <div className="flex gap-2 pt-2">
+                <PrimaryButton type="submit" loading={saving} className="flex-1 py-2.5 text-sm">
+                  {t('page.invoices.save', lang)}
+                </PrimaryButton>
+                <PrimaryButton type="button" variant="outline" className="py-2.5 text-sm" onClick={() => setModalOpen(false)} disabled={saving}>
+                  {t('page.invoices.cancel', lang)}
+                </PrimaryButton>
+              </div>
+            </form>
           </Card>
-        ))}
-      </div>
+        </div>
+      )}
+
+      {/* AI Forecast Panel */}
+      {forecastPanelOpen && (
+        <ExpenseForecastPanel
+          lang={lang}
+          companyId={user.activeCompanyId || user.companyId!}
+          onClose={() => setForecastPanelOpen(false)}
+        />
+      )}
+
+      {/* AI Alerts Panel */}
+      {alertsPanelOpen && (
+        <ExpenseAlertsPanel
+          lang={lang}
+          companyId={user.activeCompanyId || user.companyId!}
+          onClose={() => setAlertsPanelOpen(false)}
+        />
+      )}
     </div>
   );
 };
@@ -3347,67 +5147,194 @@ const AdminExpensesView: React.FC<{ lang: UiLang }> = ({ lang }) => {
    ADMIN - CLIENTS
    ================================================================ */
 
-const AdminClientsView: React.FC<{ lang: UiLang }> = ({ lang }) => {
+const AdminClientsView: React.FC<{ user: User; lang: UiLang }> = ({ user, lang }) => {
   const [data, setData] = useState<Client[]>([]);
-  const [adding, setAdding] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [err, setErr] = useState('');
-  useEffect(() => {
-    void (async () => {
-      try {
-        const rows = await RealAPI.getClients();
-        setData(rows.map(clientFromBackend));
-      } catch (e) {
-        setErr(getErrorMessage(e).message);
-      }
-    })();
-  }, []);
+  const [modalOpen, setModalOpen] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [form, setForm] = useState({ name: '', email: '', phone: '', companyName: '' });
 
-  const handleAddClient = async () => {
-    if (adding) return;
-    setAdding(true);
+  const canDeleteClients = user.role !== UserRole.TEAM_MEMBER;
+
+  const load = async () => {
+    setLoading(true);
     setErr('');
     try {
-      const row = await RealAPI.createClient({
-        name: 'Nouveau client',
-        email: `client${Date.now().toString().slice(-4)}@example.com`,
-        phone: '+216 00 000 000',
-        companyName: 'Nouvelle entreprise',
-      });
-      setData((prev) => [clientFromBackend(row), ...prev]);
+      const rows = await RealAPI.getClients();
+      setData(rows.map(clientFromBackend));
     } catch (e) {
       setErr(getErrorMessage(e).message);
     } finally {
-      setAdding(false);
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    void load();
+  }, [user.activeCompanyId, user.companyId]);
+
+  const openNew = () => {
+    setEditingId(null);
+    setForm({ name: '', email: '', phone: '', companyName: '' });
+    setModalOpen(true);
+  };
+
+  const openEdit = (c: Client) => {
+    setEditingId(c.id);
+    setForm({
+      name: c.name,
+      email: c.email || '',
+      phone: c.phone || '',
+      companyName: c.company || '',
+    });
+    setModalOpen(true);
+  };
+
+  const submitClient = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!form.name.trim() || form.name.trim().length < 2) {
+      setErr(t('page.clients.nameMin', lang));
+      return;
+    }
+    setSaving(true);
+    setErr('');
+    try {
+      const payload = {
+        name: form.name.trim(),
+        email: form.email.trim() || undefined,
+        phone: form.phone.trim() || undefined,
+        companyName: form.companyName.trim() || undefined,
+      };
+      if (editingId) {
+        const row = await RealAPI.updateClient(editingId, payload);
+        setData((prev) => prev.map((x) => (x.id === editingId ? clientFromBackend(row) : x)));
+      } else {
+        const row = await RealAPI.createClient(payload);
+        setData((prev) => [clientFromBackend(row), ...prev]);
+      }
+      notifyFinopsDataChanged();
+      setModalOpen(false);
+    } catch (e) {
+      setErr(getErrorMessage(e).message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleDelete = async (id: string) => {
+    if (!canDeleteClients) return;
+    if (!window.confirm(t('page.clients.deleteConfirm', lang))) return;
+    setErr('');
+    try {
+      await RealAPI.deleteClient(id);
+      setData((prev) => prev.filter((x) => x.id !== id));
+      notifyFinopsDataChanged();
+    } catch (e) {
+      setErr(getErrorMessage(e).message);
     }
   };
 
   return (
     <div className="space-y-6">
-      <PageHeader title={t('page.clients.title', lang)} description={t('page.clients.desc', lang)}
-        actions={<PrimaryButton onClick={handleAddClient} loading={adding} className="px-5 py-2.5 text-sm"><UserPlus size={16} /> Ajouter un client</PrimaryButton>}
+      <PageHeader
+        title={t('page.clients.title', lang)}
+        description={t('page.clients.desc', lang)}
+        actions={
+          <PrimaryButton onClick={openNew} className="px-5 py-2.5 text-sm">
+            <UserPlus size={16} /> {t('page.clients.add', lang)}
+          </PrimaryButton>
+        }
       />
       {err && <ErrorAlert message={err} onDismiss={() => setErr('')} />}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-        {data.map(c => (
-          <Card key={c.id} hover className="p-6">
-            <div className="flex items-start gap-4">
-              <div className="w-12 h-12 bg-primary-50 dark:bg-primary-900/20 rounded-xl flex items-center justify-center text-primary-600 font-bold text-lg shrink-0">
-                {(c.company || c.name).charAt(0)}
+      {loading ? (
+        <div className="flex justify-center py-20">
+          <Loader2 className="animate-spin text-primary-600" size={32} />
+        </div>
+      ) : data.length === 0 ? (
+        <EmptyState
+          icon={<Users size={32} />}
+          title={t('page.clients.title', lang)}
+          description={t('page.clients.desc', lang)}
+          action={
+            <PrimaryButton onClick={openNew} className="px-4 py-2 text-sm">
+              <UserPlus size={16} /> {t('page.clients.add', lang)}
+            </PrimaryButton>
+          }
+        />
+      ) : (
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+          {data.map((c) => (
+            <Card key={c.id} className="p-6">
+              <div className="flex items-start gap-4">
+                <div className="w-12 h-12 bg-primary-50 dark:bg-primary-900/20 rounded-xl flex items-center justify-center text-primary-600 font-bold text-lg shrink-0">
+                  {(c.company || c.name).charAt(0)}
+                </div>
+                <div className="min-w-0 flex-1">
+                  <h3 className="font-bold text-gray-900 dark:text-white truncate">{c.company || c.name}</h3>
+                  <p className="text-sm text-gray-500 truncate">{c.name}</p>
+                  <p className="text-xs text-gray-400 mt-1 truncate">{c.email || '—'}</p>
+                  {c.phone && <p className="text-xs text-gray-400 mt-0.5">{c.phone}</p>}
+                </div>
               </div>
-              <div className="min-w-0">
-                <h3 className="font-bold text-gray-900 dark:text-white truncate">{c.company || c.name}</h3>
-                <p className="text-sm text-gray-500 truncate">{c.name}</p>
-                <p className="text-xs text-gray-400 mt-1 truncate">{c.email}</p>
+              <div className="mt-4 pt-4 border-t border-gray-100 dark:border-gray-800 flex flex-wrap gap-1.5">
+                <PrimaryButton type="button" variant="outline" className="px-2 py-1 text-[11px] flex-1" onClick={() => openEdit(c)}>
+                  <Pencil size={12} /> {t('page.clients.edit', lang)}
+                </PrimaryButton>
+                {canDeleteClients && (
+                  <PrimaryButton
+                    type="button"
+                    variant="outline"
+                    className="px-2 py-1 text-[11px] flex-1 text-rose-600 border-rose-200"
+                    onClick={() => void handleDelete(c.id)}
+                  >
+                    <Trash2 size={12} /> {t('page.clients.delete', lang)}
+                  </PrimaryButton>
+                )}
               </div>
-            </div>
-            <div className="mt-4 pt-4 border-t border-gray-100 dark:border-gray-800">
-              <button onClick={() => window.alert(`Client: ${c.name}\nEmail: ${c.email}\nTéléphone: ${c.phone}`)} className="flex items-center gap-1.5 text-xs font-semibold text-primary-600 hover:text-primary-700 transition-colors">
-                Voir les détails <ChevronRight size={14} />
+            </Card>
+          ))}
+        </div>
+      )}
+
+      {modalOpen && (
+        <div
+          className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm"
+          role="dialog"
+          aria-modal="true"
+        >
+          <Card className="w-full max-w-md p-6 shadow-2xl">
+            <div className="flex items-start justify-between gap-3 mb-4">
+              <h3 className="font-bold text-lg text-gray-900 dark:text-white">
+                {editingId ? t('page.clients.modalEdit', lang) : t('page.clients.modalNew', lang)}
+              </h3>
+              <button
+                type="button"
+                className="p-1.5 rounded-lg text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors shrink-0"
+                onClick={() => !saving && setModalOpen(false)}
+                aria-label={t('page.invoices.cancel', lang)}
+              >
+                <X size={20} />
               </button>
             </div>
+            <form noValidate onSubmit={(e) => void submitClient(e)} className="space-y-4">
+              <InputField label={t('emp.fullName', lang)} value={form.name} onChange={(v) => setForm({ ...form, name: v })} required />
+              <InputField label={t('common.email', lang)} value={form.email} onChange={(v) => setForm({ ...form, email: v })} type="email" />
+              <InputField label={t('page.clients.phone', lang)} value={form.phone} onChange={(v) => setForm({ ...form, phone: v })} />
+              <InputField label={t('page.clients.companyLabel', lang)} value={form.companyName} onChange={(v) => setForm({ ...form, companyName: v })} />
+              <div className="flex gap-2 pt-2">
+                <PrimaryButton type="submit" loading={saving} className="flex-1 py-2.5 text-sm">
+                  {t('page.invoices.save', lang)}
+                </PrimaryButton>
+                <PrimaryButton type="button" variant="outline" className="py-2.5 text-sm" onClick={() => setModalOpen(false)} disabled={saving}>
+                  {t('page.invoices.cancel', lang)}
+                </PrimaryButton>
+              </div>
+            </form>
           </Card>
-        ))}
-      </div>
+        </div>
+      )}
     </div>
   );
 };
@@ -4222,7 +6149,18 @@ const AdminUsersView: React.FC<{ user: User; lang: UiLang }> = ({ user, lang }) 
    ADMIN - SETTINGS
    ================================================================ */
 
-const LegacyAdminSettingsView: React.FC<{ tenant: Tenant | null; onUpdate: (t: Tenant) => void; companyId?: string; lang: UiLang; setLang: (l: UiLang) => void }> = ({ tenant, onUpdate, companyId, lang, setLang }) => {
+const LegacyAdminSettingsView: React.FC<{
+  tenant: Tenant | null;
+  onUpdate: (t: Tenant) => void;
+  companyId?: string;
+  lang: UiLang;
+  setLang: (l: UiLang) => void;
+  languageOptions?: LanguageOption[];
+}> = ({ tenant, onUpdate, companyId, lang, setLang, languageOptions }) => {
+  const langChoices =
+    languageOptions && languageOptions.length
+      ? languageOptions
+      : LANGUAGES.map((l) => ({ ...l, code: l.code as UiLang }));
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState('');
   const [errorSolution, setErrorSolution] = useState<string | undefined>();
@@ -4265,11 +6203,15 @@ const LegacyAdminSettingsView: React.FC<{ tenant: Tenant | null; onUpdate: (t: T
               <InputField label={t('settings.taxId', lang)} value={formData.matriculeFiscal || ''} onChange={v => setFormData({ ...formData, matriculeFiscal: v })} icon={<Hash size={16} />} />
             </>
           )}
-          <SelectField label={t('settings.language', lang)} value={resolveStaticUiLang(lang)} onChange={(v) => { const next = v as Lang; setLang(next); localStorage.setItem('finops_lang', next); }} options={[
-            { value: 'en', label: 'English' },
-            { value: 'fr', label: 'Français' },
-            { value: 'ar', label: 'العربية' },
-          ]} />
+          <SelectField
+            label={t('settings.language', lang)}
+            value={String(lang)}
+            onChange={(v) => setLang(v as UiLang)}
+            options={langChoices.map((o) => ({
+              value: String(o.code),
+              label: `${o.flag} ${o.label}`,
+            }))}
+          />
         </div>
         <div className="mt-6 pt-6 border-t border-gray-100 dark:border-gray-800 flex justify-end">
           <PrimaryButton onClick={handleSave} loading={isSaving} className="px-6 py-3 text-sm">
@@ -4289,9 +6231,10 @@ const AdminSettingsView: React.FC<{
   companyId?: string;
   lang: UiLang;
   setLang: (l: UiLang) => void;
+  languageOptions: LanguageOption[];
   themePreference: ThemePreference;
   setThemePreference: (value: ThemePreference) => void;
-}> = ({ user, onUserUpdate, tenant, onUpdate, companyId, lang, setLang, themePreference, setThemePreference }) => {
+}> = ({ user, onUserUpdate, tenant, onUpdate, companyId, lang, setLang, languageOptions, themePreference, setThemePreference }) => {
   const canEditCompanySettings =
     !!companyId &&
     (user.role === UserRole.BUSINESS_OWNER ||
@@ -4302,7 +6245,7 @@ const AdminSettingsView: React.FC<{
     avatarUrl: user.avatarUrl || '',
   });
   const [preferencesForm, setPreferencesForm] = useState<UserPreferences>({
-    language: user.preferences?.language || resolveStaticUiLang(lang),
+    language: user.preferences?.language ?? String(lang),
     theme: user.preferences?.theme
       ? normalizeThemePreference(user.preferences.theme)
       : themePreference,
@@ -4345,6 +6288,23 @@ const AdminSettingsView: React.FC<{
   const [twoFactorBusy, setTwoFactorBusy] =
     useState<'' | 'setup' | 'confirm' | 'disable'>('');
 
+  const notificationOptions = useMemo(
+    () =>
+      (
+        [
+          { key: 'email' as const, labelKey: 'settings.notif.email', descKey: 'settings.notif.emailDesc' },
+          { key: 'inApp' as const, labelKey: 'settings.notif.inApp', descKey: 'settings.notif.inAppDesc' },
+          { key: 'security' as const, labelKey: 'settings.notif.security', descKey: 'settings.notif.securityDesc' },
+          { key: 'marketing' as const, labelKey: 'settings.notif.marketing', descKey: 'settings.notif.marketingDesc' },
+        ] as const
+      ).map((row) => ({
+        key: row.key,
+        label: t(row.labelKey, lang),
+        description: t(row.descKey, lang),
+      })),
+    [lang],
+  );
+
   const profileAvatar =
     profileForm.avatarUrl ||
     user.avatarUrl ||
@@ -4375,7 +6335,7 @@ const AdminSettingsView: React.FC<{
       avatarUrl: user.avatarUrl || '',
     });
     setPreferencesForm({
-      language: user.preferences?.language || resolveStaticUiLang(lang),
+      language: user.preferences?.language ?? String(lang),
       theme: user.preferences?.theme
         ? normalizeThemePreference(user.preferences.theme)
         : themePreference,
@@ -4435,7 +6395,7 @@ const AdminSettingsView: React.FC<{
         avatarUrl: profileForm.avatarUrl.trim(),
       });
       await refreshCurrentUser(updated);
-      setSuccess('Profile updated successfully.');
+      setSuccess(t('settings.saveSuccess', lang));
     } catch (err) {
       const { message, solution } = getErrorMessage(err);
       setError(message);
@@ -4454,7 +6414,7 @@ const AdminSettingsView: React.FC<{
       const updated = await RealAPI.uploadAvatar(file);
       await refreshCurrentUser(updated);
       setProfileForm((prev) => ({ ...prev, avatarUrl: updated.avatarUrl || '' }));
-      setSuccess('Avatar uploaded successfully.');
+      setSuccess(t('settings.saveSuccess', lang));
     } catch (err) {
       const { message, solution } = getErrorMessage(err);
       setError(message);
@@ -4472,16 +6432,10 @@ const AdminSettingsView: React.FC<{
     try {
       const result = await RealAPI.updateMyPreferences(preferencesForm);
       await refreshCurrentUser(result.user);
-      if (
-        preferencesForm.language &&
-        ['en', 'fr', 'ar'].includes(preferencesForm.language)
-      ) {
-        const next = preferencesForm.language as Lang;
-        setLang(next);
-        localStorage.setItem('finops_lang', next);
-      }
+      const nextLang = preferenceLanguageToUiLang(preferencesForm.language);
+      if (nextLang) setLang(nextLang);
       applyThemePreference(preferencesForm.theme);
-      setSuccess('Preferences saved successfully.');
+      setSuccess(t('settings.saveSuccess', nextLang ?? lang));
     } catch (err) {
       const { message, solution } = getErrorMessage(err);
       setError(message);
@@ -4553,7 +6507,7 @@ const AdminSettingsView: React.FC<{
         currency: updated.currency,
         taxRate: updated.taxRate,
       });
-      setSuccess('Company settings updated successfully.');
+      setSuccess(t('settings.companySaved', lang));
     } catch (err) {
       const { message, solution } = getErrorMessage(err);
       setError(message);
@@ -4632,39 +6586,9 @@ const AdminSettingsView: React.FC<{
     }
   };
 
-  const notificationOptions: Array<{
-    key: keyof NonNullable<UserPreferences['notifications']>;
-    label: string;
-    description: string;
-  }> = [
-    {
-      key: 'email',
-      label: 'Email updates',
-      description: 'Verification codes, password reset, and invitations.',
-    },
-    {
-      key: 'inApp',
-      label: 'In-app alerts',
-      description: 'Unread counters and platform notifications.',
-    },
-    {
-      key: 'security',
-      label: 'Security alerts',
-      description: 'Lockouts, suspicious activity, and credential events.',
-    },
-    {
-      key: 'marketing',
-      label: 'Product announcements',
-      description: 'Release notes and optional product communication.',
-    },
-  ];
-
   return (
     <div className="space-y-6">
-      <PageHeader
-        title={t('settings.title', lang)}
-        description="Manage your personal profile, verification flow, activity trail, and workspace preferences."
-      />
+      <PageHeader title={t('settings.title', lang)} description={t('settings.pageLead', lang)} />
       {error && (
         <ErrorAlert
           message={error}
@@ -4686,31 +6610,31 @@ const AdminSettingsView: React.FC<{
               </div>
               <div className="flex-1 space-y-4">
                 <div>
-                  <h3 className="text-lg font-bold text-gray-900 dark:text-white">Profile</h3>
-                  <p className="text-sm text-gray-500">
-                    Update your name and avatar without leaving the platform.
-                  </p>
+                  <h3 className="text-lg font-bold text-gray-900 dark:text-white">
+                    {t('settings.profileTitle', lang)}
+                  </h3>
+                  <p className="text-sm text-gray-500">{t('settings.profileLead', lang)}</p>
                 </div>
                 <div className="flex flex-wrap gap-2">
                   <Badge variant={user.emailVerified ? 'success' : 'warning'}>
-                    {user.emailVerified ? 'Email verified' : 'Verification pending'}
+                    {user.emailVerified ? t('settings.emailVerified', lang) : t('settings.emailPending', lang)}
                   </Badge>
                   <Badge variant={roleBadgeVariant(user.companyRole || String(user.role))}>
                     {user.companyRole ? roleJobLabel(user.companyRole, lang) : user.role}
                   </Badge>
                   <Badge variant={user.twoFactorEnabled ? 'success' : 'default'}>
-                    {user.twoFactorEnabled ? 'Authenticator app 2FA enabled' : 'Authenticator app 2FA off'}
+                    {user.twoFactorEnabled ? t('settings.twoFAOn', lang) : t('settings.twoFAOff', lang)}
                   </Badge>
                 </div>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <InputField
-                    label="Full name"
+                    label={t('emp.fullName', lang)}
                     value={profileForm.name}
                     onChange={(value) => setProfileForm((prev) => ({ ...prev, name: value }))}
                     icon={<UserCheck size={16} />}
                   />
                   <InputField
-                    label="Email"
+                    label={t('common.email', lang)}
                     value={user.email}
                     onChange={() => {}}
                     icon={<Mail size={16} />}
@@ -4718,11 +6642,11 @@ const AdminSettingsView: React.FC<{
                   />
                   <div className="md:col-span-2">
                     <InputField
-                      label="Avatar URL"
+                      label={t('settings.avatarUrlLabel', lang)}
                       type="url"
                       value={profileForm.avatarUrl}
                       onChange={(value) => setProfileForm((prev) => ({ ...prev, avatarUrl: value }))}
-                      placeholder="https://..."
+                      placeholder={t('settings.logoPh', lang)}
                     />
                   </div>
                 </div>
@@ -4740,19 +6664,19 @@ const AdminSettingsView: React.FC<{
                     loading={avatarUploading}
                     className="px-4 py-2.5 text-sm"
                   >
-                    <Plus size={14} /> Upload avatar
+                    <Plus size={14} /> {t('settings.uploadAvatar', lang)}
                   </PrimaryButton>
                   <PrimaryButton
                     onClick={() => void handleSaveProfile()}
                     loading={profileSaving}
                     className="px-4 py-2.5 text-sm"
                   >
-                    <CheckCircle2 size={14} /> Save profile
+                    <CheckCircle2 size={14} /> {t('settings.saveProfile', lang)}
                   </PrimaryButton>
                 </div>
                 <div className="rounded-xl bg-gray-50 dark:bg-gray-800/60 px-4 py-3 text-sm">
                   <p className="text-xs uppercase tracking-wider font-semibold text-gray-500">
-                    Last login
+                    {t('settings.lastLogin', lang)}
                   </p>
                   <p className="mt-1 font-semibold text-gray-900 dark:text-white">
                     {formatDateTime(user.lastLoginAt, lang)}
@@ -4765,24 +6689,26 @@ const AdminSettingsView: React.FC<{
           <Card className="p-6">
             <div className="space-y-5">
               <div>
-                <h3 className="text-lg font-bold text-gray-900 dark:text-white">Preferences</h3>
-                <p className="text-sm text-gray-500">
-                  Save the exact language, theme, timezone, date format, and notification defaults you want.
-                </p>
+                <h3 className="text-lg font-bold text-gray-900 dark:text-white">
+                  {t('settings.prefsTitle', lang)}
+                </h3>
+                <p className="text-sm text-gray-500">{t('settings.prefsLead', lang)}</p>
               </div>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <SelectField
-                  label="Language"
-                  value={preferencesForm.language || 'fr'}
-                  onChange={(value) => setPreferencesForm((prev) => ({ ...prev, language: value }))}
-                  options={[
-                    { value: 'fr', label: 'Français' },
-                    { value: 'en', label: 'English' },
-                    { value: 'ar', label: 'العربية' },
-                  ]}
+                  label={t('settings.language', lang)}
+                  value={preferencesForm.language || String(lang)}
+                  onChange={(value) => {
+                    setPreferencesForm((prev) => ({ ...prev, language: value }));
+                    setLang(value as UiLang);
+                  }}
+                  options={languageOptions.map((o) => ({
+                    value: String(o.code),
+                    label: `${o.flag} ${o.label}`,
+                  }))}
                 />
                 <SelectField
-                  label="Theme"
+                  label={t('settings.theme', lang)}
                   value={preferencesForm.theme || 'light'}
                   onChange={(value) =>
                     setPreferencesForm((prev) => ({
@@ -4791,12 +6717,12 @@ const AdminSettingsView: React.FC<{
                     }))
                   }
                   options={[
-                    { value: 'light', label: 'Light' },
-                    { value: 'dark', label: 'Dark' },
+                    { value: 'light', label: t('settings.themeLight', lang) },
+                    { value: 'dark', label: t('settings.themeDark', lang) },
                   ]}
                 />
                 <SelectField
-                  label="Timezone"
+                  label={t('settings.timezone', lang)}
                   value={preferencesForm.timezone || 'Africa/Tunis'}
                   onChange={(value) => setPreferencesForm((prev) => ({ ...prev, timezone: value }))}
                   options={[
@@ -4807,7 +6733,7 @@ const AdminSettingsView: React.FC<{
                   ]}
                 />
                 <SelectField
-                  label="Date format"
+                  label={t('settings.dateFormat', lang)}
                   value={preferencesForm.dateFormat || 'DD/MM/YYYY'}
                   onChange={(value) => setPreferencesForm((prev) => ({ ...prev, dateFormat: value }))}
                   options={[
@@ -4850,7 +6776,7 @@ const AdminSettingsView: React.FC<{
                   loading={preferencesSaving}
                   className="px-5 py-2.5 text-sm"
                 >
-                  <CheckCircle2 size={14} /> Save preferences
+                  <CheckCircle2 size={14} /> {t('settings.savePrefs', lang)}
                 </PrimaryButton>
               </div>
             </div>
@@ -4860,10 +6786,10 @@ const AdminSettingsView: React.FC<{
             <Card className="p-6">
               <div className="space-y-5">
                 <div>
-                  <h3 className="text-lg font-bold text-gray-900 dark:text-white">Company settings</h3>
-                  <p className="text-sm text-gray-500">
-                    Owners and managers can still test company updates here without leaving the settings area.
-                  </p>
+                  <h3 className="text-lg font-bold text-gray-900 dark:text-white">
+                    {t('settings.companyCardTitle', lang)}
+                  </h3>
+                  <p className="text-sm text-gray-500">{t('settings.companyCardLead', lang)}</p>
                 </div>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <InputField
@@ -4886,7 +6812,7 @@ const AdminSettingsView: React.FC<{
                     icon={<Hash size={16} />}
                   />
                   <SelectField
-                    label="Currency"
+                    label={t('settings.currency', lang)}
                     value={companyForm.currency}
                     onChange={(value) => setCompanyForm((prev) => ({ ...prev, currency: value }))}
                     options={[
@@ -4896,7 +6822,7 @@ const AdminSettingsView: React.FC<{
                     ]}
                   />
                   <InputField
-                    label="Tax rate"
+                    label={t('settings.taxRate', lang)}
                     type="number"
                     value={companyForm.taxRate}
                     onChange={(value) => setCompanyForm((prev) => ({ ...prev, taxRate: value }))}
@@ -4908,7 +6834,7 @@ const AdminSettingsView: React.FC<{
                     loading={companySaving}
                     className="px-5 py-2.5 text-sm"
                   >
-                    <CheckCircle2 size={14} /> Save company settings
+                    <CheckCircle2 size={14} /> {t('settings.saveCompanySettings', lang)}
                   </PrimaryButton>
                 </div>
               </div>
@@ -5273,6 +7199,7 @@ const ClientInvoicesView: React.FC<{ user: User; lang: UiLang }> = ({ user, lang
       await RealAPI.payInvoice(id);
       const rows = await RealAPI.getInvoices();
       setData(rows.map(invoiceFromBackend));
+      notifyFinopsDataChanged();
     } finally {
       setPaying(null);
     }

@@ -8,6 +8,7 @@ import { CompaniesController } from './companies.controller';
 import { AuthModule } from '../auth/auth.module';
 import { MembershipsModule } from '../memberships/memberships.module';
 import { NotificationsModule } from '../notifications/notifications.module';
+import { InvoiceNinjaModule } from '../invoice-ninja/invoice-ninja.module';
 
 @Module({
   imports: [
@@ -15,6 +16,7 @@ import { NotificationsModule } from '../notifications/notifications.module';
     AuthModule,
     MembershipsModule,
     NotificationsModule,
+    InvoiceNinjaModule,
   ],
   providers: [CompaniesService],
   controllers: [CompaniesController],

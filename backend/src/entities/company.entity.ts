@@ -57,6 +57,17 @@ export class Company {
   @Column({ nullable: true })
   address?: string;
 
+  /** Invoice Ninja client representing this company (tenant) when synced. */
+  @Column({ name: 'ninja_client_id', nullable: true })
+  ninjaClientId?: string;
+
+  /**
+   * Entreprise Invoice Ninja sélectionnée (header X-Company-Id) pour cette société FinOps.
+   * Liste disponible via GET /companies/invoice-ninja/options.
+   */
+  @Column({ name: 'invoice_ninja_company_id', nullable: true })
+  invoiceNinjaCompanyId?: string;
+
   @Column({ nullable: true })
   phone?: string;
 

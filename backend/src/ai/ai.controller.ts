@@ -17,18 +17,27 @@ import {
   ChatDto,
   ChatResult,
   CostOptimizationResult,
+  CashFlowCopilotDto,
+  CashFlowCopilotResult,
   ForecastDto,
   ForecastResult,
   MonthlyReportResult,
   ReportDto,
 } from './dto/finops-ai.dto';
 import { User, UserRole } from '../entities/user.entity';
+import { SmartDocumentIntakeDto, SmartDocumentIntakeResult } from './dto/invoice-extraction.dto';
+import { InvoiceAiExtractionService } from './invoice-ai/invoice-ai-extraction.service';
+import { CashFlowCopilotService } from './cash-flow-copilot.service';
 
 @ApiTags('AI Analytics')
 @ApiBearerAuth()
 @Controller('ai')
 export class AiController {
-  constructor(private readonly aiService: AiService) {}
+  constructor(
+    private readonly aiService: AiService,
+    private readonly invoiceAiExtractionService: InvoiceAiExtractionService,
+    private readonly cashFlowCopilotService: CashFlowCopilotService,
+  ) {}
 
   @Get('insights')
   @UseGuards(JwtAuthGuard, RolesGuard)
@@ -74,6 +83,25 @@ export class AiController {
   @ApiOperation({ summary: 'Forecast future expenses from historical data' })
   forecast(@CurrentUser() user: User, @Body() payload: ForecastDto): Promise<ForecastResult> {
     return this.aiService.forecast(user.activeCompanyId || user.companyId!, payload);
+  }
+
+  @Post('smart-intake')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.PLATFORM_ADMIN, UserRole.OWNER, UserRole.MANAGER, UserRole.EMPLOYEE, UserRole.ACCOUNTANT)
+  @ApiOperation({ summary: 'Extract an invoice or receipt draft from pasted document text' })
+  smartIntake(@Body() payload: SmartDocumentIntakeDto): Promise<SmartDocumentIntakeResult> {
+    return this.invoiceAiExtractionService.intakeDocument(payload);
+  }
+
+  @Post('cash-flow-copilot')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.PLATFORM_ADMIN, UserRole.OWNER, UserRole.MANAGER, UserRole.ACCOUNTANT)
+  @ApiOperation({ summary: 'Generate a short-term cash-flow copilot forecast' })
+  cashFlowCopilot(
+    @CurrentUser() user: User,
+    @Body() payload: CashFlowCopilotDto,
+  ): Promise<CashFlowCopilotResult> {
+    return this.cashFlowCopilotService.generate(user.activeCompanyId || user.companyId!, payload);
   }
 
   @Post('chat')

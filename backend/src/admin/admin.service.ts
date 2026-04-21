@@ -40,6 +40,8 @@ export class AdminService {
     credentials: { email: string; tempPassword: string; role: string; companyName: string };
     emailSent: boolean;
     previewUrl?: string;
+    mailProvider: 'gmail' | 'smtp' | 'ethereal' | 'console';
+    mailConfigured: boolean;
   }> {
     const req = await this.registrationService.findById(requestId);
     if (!req) {
@@ -130,6 +132,8 @@ export class AdminService {
       },
       emailSent: emailResult.sent,
       previewUrl: emailResult.previewUrl,
+      mailProvider: emailResult.provider,
+      mailConfigured: this.mailService.isDeliveryReady(),
     };
   }
 
@@ -140,6 +144,8 @@ export class AdminService {
     message: string;
     emailSent: boolean;
     previewUrl?: string;
+    mailProvider: 'gmail' | 'smtp' | 'ethereal' | 'console';
+    mailConfigured: boolean;
     rejectedUser: { email: string; name: string; reason: string };
   }> {
     const req = await this.registrationService.findById(requestId);
@@ -177,6 +183,8 @@ export class AdminService {
       message: 'Demande rejetée.',
       emailSent: emailResult.sent,
       previewUrl: emailResult.previewUrl,
+      mailProvider: emailResult.provider,
+      mailConfigured: this.mailService.isDeliveryReady(),
       rejectedUser: {
         email: req.email,
         name: req.ownerName,
@@ -240,6 +248,8 @@ export class AdminService {
     credentials: { email: string; tempPassword: string; role: string; companyName: string };
     emailSent: boolean;
     previewUrl?: string;
+    mailProvider: 'gmail' | 'smtp' | 'ethereal' | 'console';
+    mailConfigured: boolean;
   }> {
     const req = await this.registrationService.findEmployeeAccessRequestById(
       requestId,
@@ -321,6 +331,8 @@ export class AdminService {
       },
       emailSent: emailResult.sent,
       previewUrl: emailResult.previewUrl,
+      mailProvider: emailResult.provider,
+      mailConfigured: this.mailService.isDeliveryReady(),
     };
   }
 
@@ -331,6 +343,8 @@ export class AdminService {
     message: string;
     emailSent: boolean;
     previewUrl?: string;
+    mailProvider: 'gmail' | 'smtp' | 'ethereal' | 'console';
+    mailConfigured: boolean;
     rejectedUser: { email: string; name: string; reason: string };
   }> {
     const req = await this.registrationService.findEmployeeAccessRequestById(
@@ -359,6 +373,8 @@ export class AdminService {
       message: 'Demande employé rejetée.',
       emailSent: emailResult.sent,
       previewUrl: emailResult.previewUrl,
+      mailProvider: emailResult.provider,
+      mailConfigured: this.mailService.isDeliveryReady(),
       rejectedUser: {
         email: req.email,
         name: req.fullName,

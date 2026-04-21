@@ -34,6 +34,7 @@ import { SubscriptionsModule } from './subscriptions/subscriptions.module';
 import { AiModule } from './ai/ai.module';
 import { NotificationsModule } from './notifications/notifications.module';
 import { InvoicesModule } from './invoices/invoices.module';
+import { DashboardModule } from './dashboard/dashboard.module';
 import { ActivityLogInterceptor } from './common/interceptors/activity-log.interceptor';
 
 function resolveDatasourceOptions(): DataSourceOptions {
@@ -53,27 +54,14 @@ function resolveDatasourceOptions(): DataSourceOptions {
     InvoiceRecord,
   ];
 
-  const dbType = (process.env.DB_TYPE || 'mysql').toLowerCase();
-
-  if (dbType === 'mysql') {
-    return {
-      type: 'mysql',
-      // Force IPv4 localhost to avoid Windows resolving "localhost" to "::1".
-      host: process.env.DB_HOST || '127.0.0.1',
-      port: parseInt(process.env.DB_PORT || '3306', 10),
-      username: process.env.DB_USER || 'root',
-      password: process.env.DB_PASSWORD || '',
-      database: process.env.DB_NAME || 'finops_saas',
-      entities,
-      synchronize: process.env.NODE_ENV !== 'production',
-      logging: process.env.NODE_ENV === 'development',
-    };
-  }
-
-  // Opt-in only: set DB_TYPE=sqlite for local file DB
   return {
-    type: 'better-sqlite3',
-    database: process.env.DB_SQLITE_PATH || join(process.cwd(), 'data', 'finops.db'),
+    type: 'mysql',
+    // Force IPv4 localhost to avoid Windows resolving "localhost" to "::1".
+    host: process.env.DB_HOST || '127.0.0.1',
+    port: parseInt(process.env.DB_PORT || '3306', 10),
+    username: process.env.DB_USER || 'root',
+    password: process.env.DB_PASSWORD || '',
+    database: process.env.DB_NAME || 'finops_saas',
     entities,
     synchronize: process.env.NODE_ENV !== 'production',
     logging: process.env.NODE_ENV === 'development',
@@ -82,7 +70,11 @@ function resolveDatasourceOptions(): DataSourceOptions {
 
 @Module({
   imports: [
-    ConfigModule.forRoot({ isGlobal: true }),
+    ConfigModule.forRoot({
+      isGlobal: true,
+      // Ensure backend config is loaded even when process.cwd() is repo root
+      envFilePath: [join(__dirname, '..', '.env')],
+    }),
     TypeOrmModule.forRoot(resolveDatasourceOptions()),
     MailModule,
     AuthModule,
@@ -99,6 +91,7 @@ function resolveDatasourceOptions(): DataSourceOptions {
     AiModule,
     NotificationsModule,
     InvoicesModule,
+    DashboardModule,
     BootstrapModule,
   ],
   controllers: [AppController],

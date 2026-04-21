@@ -78,6 +78,9 @@ export interface Invoice {
   id: string;
   number: string;
   clientName: string;
+  clientEmail?: string;
+  /** Lien optionnel vers un client CRM (entreprise courante). */
+  clientId?: string;
   date: string;
   dueDate: string;
   total: number;
@@ -92,6 +95,8 @@ export interface Expense {
   date: string;
   status: 'Pending' | 'Approved' | 'Rejected';
   reportedBy: string;
+  notes?: string;
+  createdBy?: string;
 }
 
 export interface Client {
