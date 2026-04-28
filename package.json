@@ -1,0 +1,31 @@
+{
+  "name": "finops-saas-platform",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "npm run dev:all",
+    "dev:frontend": "vite",
+    "dev:backend": "npm --prefix backend run start:dev",
+    "dev:all": "concurrently -n FRONTEND,BACKEND -c cyan,magenta \"npm run dev:frontend\" \"npm run dev:backend\"",
+    "build": "vite build",
+    "build:backend": "npm --prefix backend run build",
+    "build:all": "npm run build && npm run build:backend",
+    "preview": "vite preview",
+    "test:backend": "npm --prefix backend test -- --passWithNoTests"
+  },
+  "dependencies": {
+    "@google/genai": "^1.40.0",
+    "lucide-react": "^0.563.0",
+    "react": "^19.2.4",
+    "react-dom": "^19.2.4",
+    "recharts": "^3.7.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.14.0",
+    "@vitejs/plugin-react": "^5.0.0",
+    "concurrently": "^9.1.2",
+    "typescript": "~5.8.2",
+    "vite": "^6.2.0"
+  }
+}
