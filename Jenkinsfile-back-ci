@@ -63,7 +63,11 @@ pipeline {
             steps {
                 withSonarQubeEnv('SonarQube') {
                     script {
-                        runCommand('npx --yes sonar-scanner')
+                        if (isUnix()) {
+                            sh 'npx sonar-scanner -Dsonar.login=$SONAR_AUTH_TOKEN'
+                        } else {
+                            bat 'npx sonar-scanner -Dsonar.login=%SONAR_AUTH_TOKEN%'
+                        }
                     }
                 }
             }
