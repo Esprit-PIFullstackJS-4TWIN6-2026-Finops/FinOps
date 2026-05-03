@@ -25,7 +25,7 @@ pipeline {
     }
 
     parameters {
-        string(name: 'IMAGE_NAME', defaultValue: 'multitenant-frontend', description: 'Docker image name for the frontend')
+        string(name: 'IMAGE_NAME', defaultValue: 'nouranelamm/multitenant-frontend', description: 'Docker image name for the frontend')
         string(name: 'CONTAINER_NAME', defaultValue: 'multitenant-frontend-container', description: 'Docker container name for the frontend')
         string(name: 'HOST_PORT', defaultValue: '8080', description: 'Host port mapped to the frontend container')
     }
