@@ -1,0 +1,62 @@
+def runCommand(String command) {
+    if (isUnix()) {
+        sh command
+    } else {
+        bat command
+    }
+}
+
+pipeline {
+    agent any
+
+    options {
+        skipDefaultCheckout(true)
+        timestamps()
+    }
+
+    tools {
+        nodejs 'NodeJS'
+    }
+
+    environment {
+        CI = 'true'
+    }
+
+    stages {
+        stage('Checkout') {
+            steps {
+                checkout scm
+            }
+        }
+
+        stage('Install Frontend Dependencies') {
+            steps {
+                script {
+                    runCommand('npm ci')
+                }
+            }
+        }
+
+        stage('Run Frontend Checks') {
+            steps {
+                script {
+                    runCommand('npm run test:frontend')
+                }
+            }
+        }
+
+        stage('Build Frontend') {
+            steps {
+                script {
+                    runCommand('npm run build')
+                }
+            }
+        }
+    }
+
+    post {
+        always {
+            archiveArtifacts artifacts: 'dist/**/*', allowEmptyArchive: true
+        }
+    }
+}

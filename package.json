@@ -1,5 +1,5 @@
 {
-  "name": "finops-saas-platform",
+  "name": "multitenant",
   "private": true,
   "version": "0.0.0",
   "type": "module",
@@ -12,7 +12,8 @@
     "build:backend": "npm --prefix backend run build",
     "build:all": "npm run build && npm run build:backend",
     "preview": "vite preview",
-    "test:backend": "npm --prefix backend test -- --passWithNoTests"
+    "test:backend": "npm --prefix backend test -- --passWithNoTests",
+    "test:frontend": "echo \"No frontend tests yet\" && exit 0"
   },
   "dependencies": {
     "@google/genai": "^1.40.0",

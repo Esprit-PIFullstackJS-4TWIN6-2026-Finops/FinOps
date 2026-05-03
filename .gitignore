@@ -7,16 +7,73 @@ yarn-error.log*
 pnpm-debug.log*
 lerna-debug.log*
 
-node_modules
-.vite/
-dist
-dist-ssr
-*.local
-.env
+# Runtime and diagnostic files
+report.[0-9]*.[0-9]*.[0-9]*.[0-9]*.json
+pids
+*.pid
+*.seed
+*.pid.lock
 
-# Editor directories and files
+# Test and coverage output
+coverage
+*.lcov
+.nyc_output
+
+# Build and dependency output
+node_modules/
+jspm_packages/
+web_modules/
+.vite/
+frontend/dist/
+backend/dist/
+dist-ssr
+build/Release
+lib-cov
+
+# Caches
+*.tsbuildinfo
+.npm
+.eslintcache
+.stylelintcache
+.cache
+.parcel-cache
+.temp
+.svelte-kit/
+.serverless/
+.fusebox/
+.dynamodb/
+.firebase/
+.docusaurus
+**/.vitepress/dist
+**/.vitepress/cache
+
+# Package manager files
+*.tgz
+.yarn-integrity
+.pnp.*
+.yarn/*
+!.yarn/patches
+!.yarn/plugins
+!.yarn/releases
+!.yarn/sdks
+!.yarn/versions
+
+# Environment files
+.env
+.env.*
+!.env.example
+*.local
+
+# Framework output
+.next
+out
+.nuxt
+.vuepress/dist
+
+# Editor and OS files
 .vscode/*
 !.vscode/extensions.json
+.vscode-test
 .idea
 .DS_Store
 *.suo
@@ -25,10 +82,14 @@ dist-ssr
 *.sln
 *.sw?
 
-# Local safety backup (do not commit)
+# Local project artifacts
 backup_local_project/
 backend/uploads/
 
 # Python
 __pycache__/
 *.py[cod]
+
+# Vite timestamp files
+vite.config.js.timestamp-*
+vite.config.ts.timestamp-*

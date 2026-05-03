@@ -1,0 +1,7 @@
+node_modules
+frontend/dist
+frontend/.env
+.codex-run
+frontend-dev*.log
+dev-*.log
+backend

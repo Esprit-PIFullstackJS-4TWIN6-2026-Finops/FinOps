@@ -1,0 +1,41 @@
+/* Styles globaux optionnels (Tailwind via CDN dans index.html) */
+#root {
+  min-height: 100vh;
+}
+
+:root[data-large-ui='true'] .a11y-logo {
+  transform: scale(1.12);
+  transform-origin: center;
+}
+
+:root[data-large-ui='true'] .a11y-avatar {
+  transform: scale(1.14);
+  transform-origin: center;
+}
+
+.a11y-logo,
+.a11y-avatar {
+  transition: transform 160ms ease;
+}
+
+.a11y-tooltip {
+  max-width: min(18rem, calc(100vw - 2rem));
+}
+
+button:focus-visible,
+a:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible,
+[tabindex]:focus-visible {
+  outline: 3px solid rgba(37, 99, 235, 0.55);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .a11y-logo,
+  .a11y-avatar,
+  .a11y-tooltip {
+    transition: none !important;
+  }
+}
