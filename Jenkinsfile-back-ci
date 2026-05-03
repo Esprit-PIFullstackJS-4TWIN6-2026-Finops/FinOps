@@ -75,6 +75,10 @@ pipeline {
     }
 
     post {
+        success {
+            build job: 'backend-cd'
+        }
+
         always {
             archiveArtifacts artifacts: 'backend/coverage/**/*', allowEmptyArchive: true
             archiveArtifacts artifacts: 'backend/dist/**/*', allowEmptyArchive: true
