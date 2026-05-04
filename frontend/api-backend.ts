@@ -12,7 +12,7 @@ export function notifyFinopsDataChanged(): void {
   window.dispatchEvent(new CustomEvent(FINOPS_DATA_CHANGED_EVENT));
 }
 
-const API = 'http://192.168.100.189:32343';
+const API = import.meta.env.VITE_API_URL || 'http://localhost:3000';
 
 function getToken(): string | null {
   return localStorage.getItem('finops_token');

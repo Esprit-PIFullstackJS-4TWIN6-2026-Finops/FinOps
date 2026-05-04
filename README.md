@@ -33,8 +33,8 @@ npm run dev
 ```
 
 - Frontend: `http://localhost:5173`
-- Backend: `http://192.168.100.189:32343`
-- Swagger: `http://192.168.100.189:32343/docs`
+- Backend: `http://localhost:3000`
+- Swagger: `http://localhost:3000/docs`
 
 ## Build
 
