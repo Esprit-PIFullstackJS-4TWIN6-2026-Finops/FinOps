@@ -40,8 +40,11 @@ async function bootstrap() {
   const document = SwaggerModule.createDocument(app, config);
   SwaggerModule.setup('docs', app, document);
 
-  await app.listen(process.env.PORT ?? 3000);
-  console.log(`FinOps API running on http://localhost:${process.env.PORT ?? 3000}`);
-  console.log(`Swagger docs: http://localhost:${process.env.PORT ?? 3000}/docs`);
+  const port = Number(process.env.PORT || 3000);
+  const host = '0.0.0.0';
+
+  await app.listen(port, host);
+  console.log(`FinOps API listening on ${host}:${port}`);
+  console.log(`Swagger docs available on port ${port} at /docs`);
 }
 bootstrap();
