@@ -2,6 +2,12 @@
 
 Multitenant financial operations platform with a NestJS backend and a React + Vite frontend.
 
+## Live deployment
+
+- Frontend: `https://multitenant-frontend-uaog.onrender.com/`
+- Backend: `https://multitenant-backend-xo8n.onrender.com/`
+- Swagger: `https://multitenant-backend-xo8n.onrender.com/docs`
+
 ## Project layout
 
 ```text
