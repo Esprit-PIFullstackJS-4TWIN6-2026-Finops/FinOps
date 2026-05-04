@@ -12,7 +12,7 @@ export function notifyFinopsDataChanged(): void {
   window.dispatchEvent(new CustomEvent(FINOPS_DATA_CHANGED_EVENT));
 }
 
-const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:3000';
+const API = 'http://192.168.100.189:32343';
 
 function getToken(): string | null {
   return localStorage.getItem('finops_token');
@@ -64,7 +64,7 @@ async function fetchWithAuth(
   if (token) headers['Authorization'] = `Bearer ${token}`;
 
   try {
-    return await fetch(`${API_BASE}${path}`, {
+    return await fetch(`${API}${path}`, {
       ...options,
       headers,
       credentials: 'include',
@@ -111,7 +111,7 @@ function toQueryString(params: Record<string, unknown>) {
 
 export async function checkBackendHealth(): Promise<boolean> {
   try {
-    const res = await fetch(`${API_BASE}/health`, { method: 'GET' });
+    const res = await fetch(`${API}/health`, { method: 'GET' });
     return res.ok;
   } catch {
     return false;
@@ -1044,7 +1044,12 @@ export const BackendAPI = {
   },
 
   async getTranslationLanguages() {
-    return fetchApi<{ languages: string[] }>('/ai/languages');
+    const res = await fetch(`${API}/ai/languages`, { method: 'GET' });
+    const data = await res.json().catch(() => ({ languages: [] }));
+    if (!res.ok) {
+      throw new Error(`${res.status}:${res.statusText || 'Erreur'}`);
+    }
+    return data as { languages: string[] };
   },
 
   async analyzeExpenses(payload: { lookbackMonths?: number } = {}) {

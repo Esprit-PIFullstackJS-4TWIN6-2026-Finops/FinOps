@@ -114,13 +114,13 @@ Load sample data for testing:
 #### Forecasting Example
 ```bash
 curl -H "Authorization: Bearer YOUR_JWT_TOKEN" \
-  "http://localhost:3000/ai/forecasting?companyId=company-123&category=Office%20Supplies&periodMonths=3"
+  "http://192.168.100.189:32343/ai/forecasting?companyId=company-123&category=Office%20Supplies&periodMonths=3"
 ```
 
 #### Alerts Example
 ```bash
 curl -H "Authorization: Bearer YOUR_JWT_TOKEN" \
-  "http://localhost:3000/ai/alerts?companyId=company-123"
+  "http://192.168.100.189:32343/ai/alerts?companyId=company-123"
 ```
 
 ## Algorithms (V1 Simple Implementation)
