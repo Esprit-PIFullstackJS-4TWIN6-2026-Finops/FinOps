@@ -1,6 +1,6 @@
 import { Injectable, OnModuleInit } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { DataSource, Repository } from 'typeorm';
 import * as bcrypt from 'bcrypt';
 import { User } from '../entities/user.entity';
 import { UserRole } from '../entities/user.entity';
@@ -13,9 +13,29 @@ export class DatabaseBootstrapService implements OnModuleInit {
     private userRepo: Repository<User>,
     @InjectRepository(Role)
     private roleRepo: Repository<Role>,
+    private readonly dataSource: DataSource,
   ) {}
 
   async onModuleInit() {
+    if (!this.dataSource.isInitialized) {
+      console.warn(
+        '[Bootstrap] Database not ready during startup; seed will run after the connection is established.',
+      );
+      return;
+    }
+
+    await this.runSeedsSafely();
+  }
+
+  async runSeedsSafely() {
+    try {
+      await this.runSeeds();
+    } catch (error) {
+      console.error('[Bootstrap] Failed to seed initial data:', error);
+    }
+  }
+
+  private async runSeeds() {
     const roleSeeds = [
       { code: UserRole.PLATFORM_ADMIN, description: 'Platform administrator' },
       { code: UserRole.OWNER, description: 'Business owner' },
@@ -44,6 +64,6 @@ export class DatabaseBootstrapService implements OnModuleInit {
       })),
       ['email'],
     );
-    console.log('[Bootstrap] Roles + admin seeds vérifiés/insérés (idempotent).');
+    console.log('[Bootstrap] Roles and admin seeds verified/inserted (idempotent).');
   }
 }

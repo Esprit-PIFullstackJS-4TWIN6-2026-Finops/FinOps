@@ -1,7 +1,6 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
-import { TypeOrmModule } from '@nestjs/typeorm';
-import { DataSourceOptions } from 'typeorm';
+import { TypeOrmModule, TypeOrmModuleOptions } from '@nestjs/typeorm';
 import { join } from 'path';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
@@ -37,7 +36,7 @@ import { InvoicesModule } from './invoices/invoices.module';
 import { DashboardModule } from './dashboard/dashboard.module';
 import { ActivityLogInterceptor } from './common/interceptors/activity-log.interceptor';
 
-function resolveDatasourceOptions(): DataSourceOptions {
+function resolveDatasourceOptions(): TypeOrmModuleOptions {
   const entities = [
     Company,
     User,
@@ -65,6 +64,7 @@ function resolveDatasourceOptions(): DataSourceOptions {
     entities,
     synchronize: process.env.NODE_ENV !== 'production',
     logging: process.env.NODE_ENV === 'development',
+    manualInitialization: process.env.NODE_ENV === 'production',
   };
 }
 
