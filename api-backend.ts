@@ -12,7 +12,7 @@ export function notifyFinopsDataChanged(): void {
   window.dispatchEvent(new CustomEvent(FINOPS_DATA_CHANGED_EVENT));
 }
 
-const API = import.meta.env.VITE_API_URL || 'http://localhost:3000';
+const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3000';
 
 function getToken(): string | null {
   return localStorage.getItem('finops_token');
@@ -64,7 +64,7 @@ async function fetchWithAuth(
   if (token) headers['Authorization'] = `Bearer ${token}`;
 
   try {
-    return await fetch(`${API}${path}`, {
+    return await fetch(`${API_URL}${path}`, {
       ...options,
       headers,
       credentials: 'include',
@@ -111,7 +111,7 @@ function toQueryString(params: Record<string, unknown>) {
 
 export async function checkBackendHealth(): Promise<boolean> {
   try {
-    const res = await fetch(`${API}/health`, { method: 'GET' });
+    const res = await fetch(`${API_URL}/health`, { method: 'GET' });
     return res.ok;
   } catch {
     return false;
@@ -1044,7 +1044,7 @@ export const BackendAPI = {
   },
 
   async getTranslationLanguages() {
-    const res = await fetch(`${API}/ai/languages`, { method: 'GET' });
+    const res = await fetch(`${API_URL}/ai/languages`, { method: 'GET' });
     const data = await res.json().catch(() => ({ languages: [] }));
     if (!res.ok) {
       throw new Error(`${res.status}:${res.statusText || 'Erreur'}`);
