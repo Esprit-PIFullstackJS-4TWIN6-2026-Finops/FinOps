@@ -62,7 +62,8 @@ function resolveDatasourceOptions(): TypeOrmModuleOptions {
     password: process.env.DB_PASSWORD || '',
     database: process.env.DB_NAME || 'finops_saas',
     entities,
-    synchronize: process.env.NODE_ENV !== 'production',
+    // Temporary for academic deployment/demo. Disable synchronize in real production.
+    synchronize: true,
     logging: process.env.NODE_ENV === 'development',
     manualInitialization: process.env.NODE_ENV === 'production',
   };
