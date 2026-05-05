@@ -32,7 +32,7 @@ pipeline {
         stage('Install Frontend Dependencies') {
             steps {
                 script {
-                    runCommand('npm ci')
+                    runCommand('npm install')
                 }
             }
         }
@@ -40,7 +40,7 @@ pipeline {
         stage('Run Frontend Checks') {
             steps {
                 script {
-                    runCommand('npm run test:frontend')
+                    runCommand('npm run test:ci')
                 }
             }
         }
