@@ -27,6 +27,7 @@ import {
   invoiceFromBackend,
   notifyFinopsDataChanged,
   type AiAnalyzeExpensesResponse,
+  type AiEmbeddedMlForecastResponse,
   type AiCashFlowCopilotResponse,
   type AiExpenseAlertResponse,
   type AiExpenseForecastResponse,
@@ -2426,6 +2427,156 @@ const AIForecastPanel: React.FC<{ lang: UiLang }> = ({ lang }) => {
   );
 };
 
+const AIEmbeddedMlForecastPanel: React.FC<{ lang: UiLang }> = ({ lang }) => {
+  const [data, setData] = useState<AiEmbeddedMlForecastResponse | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const isFr = lang === 'fr';
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    setError('');
+    try {
+      setData(await RealAPI.embeddedMlForecast({ historyDays: 120, windowSize: 7, horizonDays: 7 }));
+    } catch (e) {
+      setData(null);
+      setError(getErrorMessage(e).message);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  useEffect(() => {
+    const refresh = () => void load();
+    window.addEventListener(FINOPS_DATA_CHANGED_EVENT, refresh);
+    return () => window.removeEventListener(FINOPS_DATA_CHANGED_EVENT, refresh);
+  }, [load]);
+
+  const money = (value: number) =>
+    `${value.toLocaleString(localeForLang(lang), {
+      minimumFractionDigits: 0,
+      maximumFractionDigits: 2,
+    })} €`;
+
+  return (
+    <Card className="p-6">
+      <div className="flex items-center justify-between mb-4 gap-3">
+        <div>
+          <h3 className="font-bold text-gray-900 dark:text-white">
+            {isFr ? 'Prévision ML embarquée' : 'Embedded ML forecast'}
+          </h3>
+          <p className="text-sm text-gray-500 dark:text-gray-400">
+            {isFr
+              ? 'Modèle TensorFlow.js entraîné directement dans le backend sur vos données de dépenses.'
+              : 'TensorFlow.js model trained directly inside the backend on your expense history.'}
+          </p>
+        </div>
+        <PrimaryButton type="button" variant="outline" className="px-3 py-2 text-xs" onClick={() => void load()} loading={loading}>
+          <RefreshCw size={14} /> {t('common.refresh', lang)}
+        </PrimaryButton>
+      </div>
+
+      {error && <p className="mb-4 text-sm text-rose-500">{error}</p>}
+
+      {data ? (
+        <div className="space-y-5">
+          <div className="flex flex-wrap gap-2">
+            <Badge variant="info">{data.framework}</Badge>
+            <Badge variant="success">{data.modelType}</Badge>
+            <Badge variant={data.modelStatus === 'trained' ? 'success' : 'warning'}>
+              {data.modelStatus === 'trained'
+                ? isFr
+                  ? 'Modèle entraîné'
+                  : 'Model trained'
+                : isFr
+                  ? 'Données insuffisantes'
+                  : 'Insufficient data'}
+            </Badge>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <div className="rounded-xl bg-gray-50 dark:bg-gray-800/60 p-3">
+              <p className="text-[11px] text-gray-500 uppercase tracking-wider">
+                {isFr ? 'Prochaine prédiction' : 'Next prediction'}
+              </p>
+              <p className="text-lg font-bold text-gray-900 dark:text-white">{money(data.predictedNextStepExpense)}</p>
+            </div>
+            <div className="rounded-xl bg-gray-50 dark:bg-gray-800/60 p-3">
+              <p className="text-[11px] text-gray-500 uppercase tracking-wider">
+                {isFr ? 'Total horizon' : 'Horizon total'}
+              </p>
+              <p className="text-lg font-bold text-gray-900 dark:text-white">{money(data.predictedHorizonTotal)}</p>
+            </div>
+            <div className="rounded-xl bg-gray-50 dark:bg-gray-800/60 p-3">
+              <p className="text-[11px] text-gray-500 uppercase tracking-wider">
+                {isFr ? 'Confiance du modèle' : 'Model confidence'}
+              </p>
+              <p className="text-lg font-bold text-gray-900 dark:text-white">{Math.round(data.confidence * 100)}%</p>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <div className="rounded-xl border border-gray-100 dark:border-gray-800 p-3">
+              <p className="text-[11px] text-gray-500 uppercase tracking-wider">
+                {isFr ? 'Échantillons train' : 'Training samples'}
+              </p>
+              <p className="text-base font-semibold text-gray-900 dark:text-white">{data.trainingSamples}</p>
+            </div>
+            <div className="rounded-xl border border-gray-100 dark:border-gray-800 p-3">
+              <p className="text-[11px] text-gray-500 uppercase tracking-wider">RMSE</p>
+              <p className="text-base font-semibold text-gray-900 dark:text-white">{money(data.rmse)}</p>
+            </div>
+            <div className="rounded-xl border border-gray-100 dark:border-gray-800 p-3">
+              <p className="text-[11px] text-gray-500 uppercase tracking-wider">
+                {isFr ? 'Granularité' : 'Granularity'}
+              </p>
+              <p className="text-base font-semibold text-gray-900 dark:text-white">
+                {data.seriesGranularity === 'daily_aggregated'
+                  ? isFr
+                    ? 'Totaux journaliers'
+                    : 'Daily totals'
+                  : isFr
+                    ? 'Séquence de dépenses'
+                    : 'Expense sequence'}
+              </p>
+            </div>
+          </div>
+
+          <p className="text-sm text-gray-600 dark:text-gray-300">{data.explanation}</p>
+
+          {data.timeline.length > 0 ? (
+            <div className="h-[180px]">
+              <ResponsiveContainer width="100%" height="100%">
+                <LineChart data={data.timeline}>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#374151" opacity={0.1} />
+                  <XAxis dataKey="period" axisLine={false} tickLine={false} />
+                  <YAxis axisLine={false} tickLine={false} />
+                  <Tooltip />
+                  <Line type="monotone" dataKey="predictedExpense" stroke="#16a34a" strokeWidth={3} dot={{ r: 4 }} />
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
+          ) : (
+            <div className="rounded-xl bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-900/40 px-4 py-3 text-sm text-amber-700 dark:text-amber-200">
+              {isFr
+                ? 'Ajoutez davantage de dépenses historisées pour permettre l’entraînement du modèle embarqué.'
+                : 'Add more historical expenses to let the embedded model train reliably.'}
+            </div>
+          )}
+        </div>
+      ) : (
+        <p className="text-sm text-gray-500">
+          {isFr ? 'Prévision ML indisponible pour le moment.' : 'Embedded ML forecast is currently unavailable.'}
+        </p>
+      )}
+    </Card>
+  );
+};
+
 const AICashFlowCopilotPanel: React.FC<{ lang: UiLang }> = ({ lang }) => {
   const [data, setData] = useState<AiCashFlowCopilotResponse | null>(null);
   const [loading, setLoading] = useState(true);
@@ -4768,9 +4919,10 @@ const AdminDashboardView: React.FC<{ tenant: Tenant | null; user: User; lang: Ui
         <SmartInsightCard lang={lang} />
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+      <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-6">
         <AICashFlowCopilotPanel lang={lang} />
         <AIForecastPanel lang={lang} />
+        <AIEmbeddedMlForecastPanel lang={lang} />
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">

@@ -19,6 +19,8 @@ import {
   CostOptimizationResult,
   CashFlowCopilotDto,
   CashFlowCopilotResult,
+  EmbeddedMlForecastDto,
+  EmbeddedMlForecastResult,
   ForecastDto,
   ForecastResult,
   MonthlyReportResult,
@@ -28,6 +30,7 @@ import { User, UserRole } from '../entities/user.entity';
 import { SmartDocumentIntakeDto, SmartDocumentIntakeResult } from './dto/invoice-extraction.dto';
 import { InvoiceAiExtractionService } from './invoice-ai/invoice-ai-extraction.service';
 import { CashFlowCopilotService } from './cash-flow-copilot.service';
+import { EmbeddedMlForecastService } from './embedded-ml-forecast.service';
 
 @ApiTags('AI Analytics')
 @ApiBearerAuth()
@@ -37,6 +40,7 @@ export class AiController {
     private readonly aiService: AiService,
     private readonly invoiceAiExtractionService: InvoiceAiExtractionService,
     private readonly cashFlowCopilotService: CashFlowCopilotService,
+    private readonly embeddedMlForecastService: EmbeddedMlForecastService,
   ) {}
 
   @Get('insights')
@@ -102,6 +106,20 @@ export class AiController {
     @Body() payload: CashFlowCopilotDto,
   ): Promise<CashFlowCopilotResult> {
     return this.cashFlowCopilotService.generate(user.activeCompanyId || user.companyId!, payload);
+  }
+
+  @Post('embedded-ml-forecast')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.PLATFORM_ADMIN, UserRole.OWNER, UserRole.MANAGER, UserRole.ACCOUNTANT)
+  @ApiOperation({ summary: 'Train and run an embedded TensorFlow.js expense forecast model' })
+  embeddedMlForecast(
+    @CurrentUser() user: User,
+    @Body() payload: EmbeddedMlForecastDto,
+  ): Promise<EmbeddedMlForecastResult> {
+    return this.embeddedMlForecastService.generate(
+      user.activeCompanyId || user.companyId!,
+      payload,
+    );
   }
 
   @Post('chat')

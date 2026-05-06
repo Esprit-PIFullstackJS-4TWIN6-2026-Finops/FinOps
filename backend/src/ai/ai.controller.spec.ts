@@ -47,6 +47,28 @@ describe('AiController', () => {
       generatedAt: new Date().toISOString(),
     }),
   };
+  const mockEmbeddedMlForecastService = {
+    generate: jest.fn().mockResolvedValue({
+      modelStatus: 'trained',
+      modelType: 'TensorFlow.js sequential dense regressor',
+      framework: '@tensorflow/tfjs',
+      seriesGranularity: 'daily_aggregated',
+      historyDays: 120,
+      windowSize: 7,
+      horizonDays: 7,
+      trainingSamples: 24,
+      validationSamples: 6,
+      averageObservedSpend: 123.45,
+      predictedNextStepExpense: 130.12,
+      predictedHorizonTotal: 910.34,
+      confidence: 0.82,
+      mae: 12.3,
+      rmse: 18.4,
+      explanation: 'ok',
+      timeline: [],
+      generatedAt: new Date().toISOString(),
+    }),
+  };
 
   let controller: AiController;
 
@@ -55,6 +77,7 @@ describe('AiController', () => {
       mockService as any,
       mockIntakeService as any,
       mockCashFlowService as any,
+      mockEmbeddedMlForecastService as any,
     );
   });
 
@@ -80,6 +103,21 @@ describe('AiController', () => {
     expect(mockCashFlowService.generate).toHaveBeenCalledWith('company-2', {
       historyMonths: 12,
       horizonMonths: 3,
+    });
+  });
+
+  it('routes embedded ML forecast with current company context', async () => {
+    const user = {
+      id: 'u1',
+      role: UserRole.OWNER,
+      companyId: 'company-1',
+      activeCompanyId: 'company-2',
+    } as any;
+    await controller.embeddedMlForecast(user, { historyDays: 90, windowSize: 7, horizonDays: 7 });
+    expect(mockEmbeddedMlForecastService.generate).toHaveBeenCalledWith('company-2', {
+      historyDays: 90,
+      windowSize: 7,
+      horizonDays: 7,
     });
   });
 });

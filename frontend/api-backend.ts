@@ -309,6 +309,32 @@ export interface AiForecastResponse {
   generatedAt: string;
 }
 
+export interface AiEmbeddedMlForecastPointResponse {
+  period: string;
+  predictedExpense: number;
+}
+
+export interface AiEmbeddedMlForecastResponse {
+  modelStatus: 'trained' | 'insufficient_data';
+  modelType: string;
+  framework: string;
+  seriesGranularity: 'daily_aggregated' | 'expense_sequence';
+  historyDays: number;
+  windowSize: number;
+  horizonDays: number;
+  trainingSamples: number;
+  validationSamples: number;
+  averageObservedSpend: number;
+  predictedNextStepExpense: number;
+  predictedHorizonTotal: number;
+  confidence: number;
+  mae: number;
+  rmse: number;
+  explanation: string;
+  timeline: AiEmbeddedMlForecastPointResponse[];
+  generatedAt: string;
+}
+
 export interface AiCashFlowCopilotPointResponse {
   period: string;
   projectedInflows: number;
@@ -1061,6 +1087,15 @@ export const BackendAPI = {
 
   async forecast(payload: { historyMonths?: number } = {}) {
     return fetchApi<AiForecastResponse>('/ai/forecast', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  },
+
+  async embeddedMlForecast(
+    payload: { historyDays?: number; windowSize?: number; horizonDays?: number } = {},
+  ) {
+    return fetchApi<AiEmbeddedMlForecastResponse>('/ai/embedded-ml-forecast', {
       method: 'POST',
       body: JSON.stringify(payload),
     });

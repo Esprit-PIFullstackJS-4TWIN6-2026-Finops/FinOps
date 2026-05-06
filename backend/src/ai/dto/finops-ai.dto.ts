@@ -74,6 +74,26 @@ export class CashFlowCopilotDto {
   horizonMonths?: number = 3;
 }
 
+export class EmbeddedMlForecastDto {
+  @IsOptional()
+  @IsInt()
+  @Min(21)
+  @Max(365)
+  historyDays?: number = 120;
+
+  @IsOptional()
+  @IsInt()
+  @Min(3)
+  @Max(30)
+  windowSize?: number = 7;
+
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  @Max(30)
+  horizonDays?: number = 7;
+}
+
 export class ChatDto {
   @IsString()
   @IsNotEmpty()
@@ -143,6 +163,32 @@ export interface CashFlowCopilotResult {
   drivers: CashFlowCopilotDriver[];
   actions: CashFlowCopilotAction[];
   timeline: CashFlowCopilotPoint[];
+  generatedAt: string;
+}
+
+export interface EmbeddedMlForecastPoint {
+  period: string;
+  predictedExpense: number;
+}
+
+export interface EmbeddedMlForecastResult {
+  modelStatus: 'trained' | 'insufficient_data';
+  modelType: string;
+  framework: string;
+  seriesGranularity: 'daily_aggregated' | 'expense_sequence';
+  historyDays: number;
+  windowSize: number;
+  horizonDays: number;
+  trainingSamples: number;
+  validationSamples: number;
+  averageObservedSpend: number;
+  predictedNextStepExpense: number;
+  predictedHorizonTotal: number;
+  confidence: number;
+  mae: number;
+  rmse: number;
+  explanation: string;
+  timeline: EmbeddedMlForecastPoint[];
   generatedAt: string;
 }
 

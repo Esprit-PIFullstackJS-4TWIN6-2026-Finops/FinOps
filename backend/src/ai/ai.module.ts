@@ -10,6 +10,7 @@ import { ForecastingModule } from './forecasting/forecasting.module';
 import { AlertsModule } from './alerts/alerts.module';
 import { InvoiceAiExtractionService } from './invoice-ai/invoice-ai-extraction.service';
 import { CashFlowCopilotService } from './cash-flow-copilot.service';
+import { EmbeddedMlForecastService } from './embedded-ml-forecast.service';
 
 @Module({
   imports: [
@@ -18,7 +19,7 @@ import { CashFlowCopilotService } from './cash-flow-copilot.service';
     AlertsModule,
   ],
   controllers: [AiController],
-  providers: [AiService, InvoiceAiExtractionService, CashFlowCopilotService],
-  exports: [AiService, InvoiceAiExtractionService, CashFlowCopilotService],
+  providers: [AiService, InvoiceAiExtractionService, CashFlowCopilotService, EmbeddedMlForecastService],
+  exports: [AiService, InvoiceAiExtractionService, CashFlowCopilotService, EmbeddedMlForecastService],
 })
 export class AiModule {}

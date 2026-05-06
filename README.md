@@ -2,6 +2,11 @@
 
 Multitenant financial operations platform with a NestJS backend and a React + Vite frontend.
 
+## Embedded AI feature
+
+- Embedded ML expense forecast powered by a TensorFlow.js model trained inside the backend on company expense history.
+- Available through the AI dashboard and the `/ai/embedded-ml-forecast` API endpoint.
+
 ## Live deployment
 
 - Frontend: `https://multitenant-frontend-uaog.onrender.com/`
