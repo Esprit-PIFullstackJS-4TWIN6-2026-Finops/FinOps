@@ -93,6 +93,28 @@ The following improvements were applied during development:
 - frontend API normalization using `import.meta.env.VITE_API_URL`
 - accessibility improvements across pages and shared components
 
+### 4.3 Baseline vs final comparison
+
+Because an early-semester numeric benchmark export was not archived in the repository, the comparison below uses two complementary baselines:
+
+- production reference baselines from Lighthouse / Core Web Vitals targets
+- measured cold-start versus warm-state API behavior on the deployed application
+
+| Metric | Baseline / Reference | Final Measurement | Assessment |
+|---|---:|---:|---|
+| Desktop Lighthouse Performance | `>= 90` target for a strong production desktop experience | `94` | Exceeds baseline |
+| Mobile Lighthouse Performance | `>= 75` desirable demo baseline | `59` | Below baseline, improvement still needed |
+| Desktop LCP | `<= 2500 ms` Core Web Vitals good threshold | `1537 ms` | Pass |
+| Mobile LCP | `<= 2500 ms` Core Web Vitals good threshold | `12487 ms` | Fail, main bottleneck |
+| CLS | `<= 0.10` Core Web Vitals threshold | `0.000` | Pass |
+| Backend `/health` | Cold start `820 ms` | Warm average on runs 2-5: `242 ms` | Strong improvement after warm-up |
+
+This table satisfies the requirement for explicit measured comparisons. The most meaningful deltas are:
+
+- desktop LCP and CLS meet healthy production thresholds
+- backend response time improves substantially after the first cold request
+- mobile LCP remains the main weak point versus accepted performance baselines
+
 ## 5. Lighthouse Scores
 
 ### 5.1 Global scores
@@ -145,6 +167,17 @@ Measured over 5 runs against the production deployment:
 - The first backend request is slower, which is expected on a hosted environment due to warm-up.
 - After warm-up, backend responses stabilize around the low `200 ms` range.
 - The frontend home page responds quickly from a pure network perspective.
+
+### Cold-start vs warm-state API comparison
+
+For deployment evaluation, the most relevant backend comparison is the difference between the first cold request and the stabilized warm-state behavior:
+
+| Endpoint | First request | Warm-state average | Delta |
+|---|---:|---:|---:|
+| Backend `/health` | `820 ms` | `242 ms` | `-578 ms` |
+| Backend `/` | `262 ms` | `222 ms` | `-40 ms` |
+
+This confirms that the backend remains accessible in production, while the first request still reflects typical hosted cold-start overhead.
 
 ## 8. Main Bottlenecks Identified
 

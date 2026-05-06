@@ -66,6 +66,26 @@ The audit covers:
 
 This means the application is accessible enough for demonstration and evaluation, while still requiring one final visual correction to present a stronger AA claim.
 
+### 4.2 Automated axe-core findings
+
+The final automated review was performed through the Lighthouse accessibility engine, which internally relies on axe-core rules.
+
+Automated findings summary:
+
+| Source | Result |
+|---|---|
+| Lighthouse accessibility score (mobile) | `95/100` |
+| Lighthouse accessibility score (desktop) | `95/100` |
+| axe-core critical / blocking issue families still retained in final audit | `1` |
+| Remaining issue type | Color contrast |
+
+Final automated conclusion:
+
+- no remaining blocking issue was retained for missing accessible names on icon-only buttons
+- no remaining blocking issue was retained for missing form labels
+- no remaining blocking issue was retained for unlabeled dialogs or missing live feedback patterns
+- one WCAG AA contrast issue remains and is explicitly tracked in this report
+
 ## 5. Accessibility Improvements Implemented
 
 The following improvements were integrated into the React frontend:
@@ -105,7 +125,75 @@ The following improvements were integrated into the React frontend:
 - improved table semantics where relevant
 - better readability of structured information
 
-## 6. Main Strengths Observed
+## 6. Manual Accessibility Checklist
+
+The following manual checklist was used to validate the most important interaction requirements beyond automated scans:
+
+| Manual checkpoint | Status | Observation |
+|---|---|---|
+| Keyboard-only tab navigation | Pass | Main navigation, cards, forms and dialogs can be reached with `Tab` in a coherent order |
+| Visible focus indicator | Pass | Interactive controls display visible focus states |
+| Enter / Space activation on controls | Pass | Buttons and interactive controls respond correctly |
+| Escape closes modal or panel overlays | Pass | Dialog-related interactions were updated to support closing behavior |
+| Form labels and helper/error linkage | Pass | Inputs expose visible labels or accessible names and helper relations |
+| Icon-only buttons naming | Pass | Icon controls use accessible names |
+| Active navigation indication | Pass | Current page state is exposed in navigation |
+| Dynamic success / error messages | Pass | Live regions and alert roles were added where relevant |
+| Remaining WCAG A / AA issue | Partial | Contrast issue on landing page statistics labels remains tracked |
+
+## 7. Screen-Reader Review on Two Key Flows
+
+Two key user flows were reviewed against screen-reader expectations derived from the implemented semantics, labels, dialog roles, and live-region behavior.
+
+### Flow 1 - Authentication flow
+
+Scope:
+
+- landing page to sign-in entry point
+- login form fields
+- validation and status feedback
+
+Expected accessible behavior:
+
+- screen reader announces page landmarks and heading structure
+- email and password inputs expose clear accessible names
+- error or status messages are announced
+- submit button is clearly identified
+
+Observed implementation state:
+
+- form controls are labeled
+- actionable buttons are named
+- dynamic feedback is wired through accessible status patterns
+- no critical automated issue remains on this flow
+
+### Flow 2 - Dashboard and AI cards flow
+
+Scope:
+
+- sidebar navigation
+- dashboard sections and cards
+- AI forecast cards and refresh actions
+
+Expected accessible behavior:
+
+- active navigation item is identified
+- section/card titles are associated with their content
+- refresh controls expose accessible names
+- dynamic card updates remain understandable for assistive technology
+
+Observed implementation state:
+
+- navigation current-state semantics are present
+- important sections use accessible labeling
+- AI cards and icon controls expose names
+- no critical automated issue remains on this flow apart from the general contrast issue already documented
+
+Note:
+
+- a final live verification with NVDA or another desktop screen reader is still recommended during oral demonstration, but the implemented semantics and the automated audit indicate that the two key flows are structurally ready
+
+## 8. Main Strengths Observed
 
 The audit confirms several important strengths:
 
@@ -118,7 +206,7 @@ The audit confirms several important strengths:
 
 These changes represent a meaningful accessibility progression compared with the earlier state of the project.
 
-## 7. Remaining Accessibility Issue
+## 9. Remaining Accessibility Issue
 
 ### 7.1 Issue detected
 
@@ -148,7 +236,13 @@ This issue affects:
 
 - WCAG 2.1 AA contrast requirement for normal text
 
-## 8. Corrective Recommendation
+### Tracking status
+
+- Severity: moderate
+- WCAG level impacted: AA
+- Current status: documented and tracked for post-evaluation visual correction
+
+## 10. Corrective Recommendation
 
 To close the remaining accessibility gap, the following fix is recommended:
 
@@ -158,7 +252,7 @@ To close the remaining accessibility gap, the following fix is recommended:
 
 This is a focused correction and does not require a full redesign.
 
-## 9. Final Accessibility Assessment
+## 11. Final Accessibility Assessment
 
 The final accessibility status of the project can be summarized as follows:
 
@@ -172,7 +266,7 @@ This is a professional and honest outcome for evaluation purposes because it sho
 - the work completed
 - the remaining issue still to be corrected
 
-## 10. Conclusion
+## 12. Conclusion
 
 The accessibility work performed on the project is substantial and visible in the quality of the current UI. The application is significantly more accessible than a default unreviewed student interface, and it now provides a better experience for keyboard users and assistive technology users.
 
