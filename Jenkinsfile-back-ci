@@ -1,0 +1,87 @@
+def runCommand(String command) {
+    if (isUnix()) {
+        sh command
+    } else {
+        bat command
+    }
+}
+
+pipeline {
+    agent any
+
+    options {
+        skipDefaultCheckout(true)
+        timestamps()
+    }
+
+    tools {
+        nodejs 'NodeJS'
+    }
+
+    environment {
+        CI = 'true'
+    }
+
+    stages {
+        stage('Checkout') {
+            steps {
+                checkout scm
+            }
+        }
+
+        stage('Install Backend Dependencies') {
+            steps {
+                dir('backend') {
+                    script {
+                        runCommand('npm ci')
+                    }
+                }
+            }
+        }
+
+        stage('Run Backend Tests with Coverage') {
+            steps {
+                dir('backend') {
+                    script {
+                        runCommand('npm run test:ci')
+                    }
+                }
+            }
+        }
+
+        stage('Build Backend') {
+            steps {
+                dir('backend') {
+                    script {
+                        runCommand('npm run build')
+                    }
+                }
+            }
+        }
+
+        stage('SonarQube Analysis') {
+            steps {
+                withSonarQubeEnv('SonarQube') {
+                    script {
+                        if (isUnix()) {
+                            sh 'npx sonar-scanner -Dsonar.login=$SONAR_AUTH_TOKEN'
+                        } else {
+                            bat 'npx sonar-scanner -Dsonar.login=%SONAR_AUTH_TOKEN%'
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    post {
+        success {
+            build job: 'backend-cd'
+        }
+
+        always {
+            archiveArtifacts artifacts: 'backend/coverage/**/*', allowEmptyArchive: true
+            archiveArtifacts artifacts: 'backend/dist/**/*', allowEmptyArchive: true
+        }
+    }
+}

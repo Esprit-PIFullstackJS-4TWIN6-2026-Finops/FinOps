@@ -1,0 +1,74 @@
+def runCommand(String command) {
+    if (isUnix()) {
+        sh command
+    } else {
+        bat command
+    }
+}
+
+def runBestEffort(String unixCommand, String windowsCommand = null) {
+    if (isUnix()) {
+        sh "${unixCommand} || true"
+    } else {
+        bat """@echo off
+${windowsCommand ?: unixCommand}
+exit /b 0"""
+    }
+}
+
+pipeline {
+    agent any
+
+    options {
+        skipDefaultCheckout(true)
+        timestamps()
+    }
+
+    parameters {
+        string(name: 'IMAGE_NAME', defaultValue: 'nouranelamm/multitenant-backend', description: 'Docker image name for the backend')
+        string(name: 'CONTAINER_NAME', defaultValue: 'multitenant-backend-container', description: 'Docker container name for the backend')
+        string(name: 'HOST_PORT', defaultValue: '3000', description: 'Host port mapped to the backend container')
+        string(name: 'DB_HOST', defaultValue: 'host.docker.internal', description: 'MySQL host reachable from Docker')
+        string(name: 'DB_PORT', defaultValue: '3306', description: 'MySQL port')
+        string(name: 'DB_USER', defaultValue: 'root', description: 'MySQL user')
+        password(name: 'DB_PASSWORD', defaultValue: '', description: 'MySQL password')
+        string(name: 'DB_NAME', defaultValue: 'finops_saas_dev_codex', description: 'MySQL database name')
+        password(name: 'JWT_SECRET', defaultValue: 'finops-secret-key-change-in-prod', description: 'JWT secret used by the backend')
+        string(name: 'NODE_ENV', defaultValue: 'development', description: 'Node environment for the backend container')
+    }
+
+    stages {
+        stage('Checkout') {
+            steps {
+                checkout scm
+            }
+        }
+
+        stage('Build Backend Image') {
+            steps {
+                script {
+                    runCommand("docker build -t ${params.IMAGE_NAME}:${env.BUILD_NUMBER} -t ${params.IMAGE_NAME}:latest ./backend")
+                }
+            }
+        }
+
+        stage('Deploy Backend Container') {
+            steps {
+                script {
+                    runBestEffort("docker rm -f ${params.CONTAINER_NAME}", "docker rm -f ${params.CONTAINER_NAME}")
+                    runCommand(
+                        "docker run -d --name ${params.CONTAINER_NAME} --add-host=host.docker.internal:host-gateway -p ${params.HOST_PORT}:3000 -e PORT=3000 -e DB_HOST=${params.DB_HOST} -e DB_PORT=${params.DB_PORT} -e DB_USER=${params.DB_USER} -e DB_PASSWORD=${params.DB_PASSWORD} -e DB_NAME=${params.DB_NAME} -e JWT_SECRET=${params.JWT_SECRET} -e NODE_ENV=${params.NODE_ENV} ${params.IMAGE_NAME}:latest"
+                    )
+                }
+            }
+        }
+
+        stage('Verify Backend Container') {
+            steps {
+                script {
+                    runCommand("docker ps --filter name=${params.CONTAINER_NAME}")
+                }
+            }
+        }
+    }
+}

@@ -1,0 +1,65 @@
+def runCommand(String command) {
+    if (isUnix()) {
+        sh command
+    } else {
+        bat command
+    }
+}
+
+def runBestEffort(String unixCommand, String windowsCommand = null) {
+    if (isUnix()) {
+        sh "${unixCommand} || true"
+    } else {
+        bat """@echo off
+${windowsCommand ?: unixCommand}
+exit /b 0"""
+    }
+}
+
+pipeline {
+    agent any
+
+    options {
+        skipDefaultCheckout(true)
+        timestamps()
+    }
+
+    parameters {
+        string(name: 'IMAGE_NAME', defaultValue: 'nouranelamm/multitenant-frontend', description: 'Docker image name for the frontend')
+        string(name: 'CONTAINER_NAME', defaultValue: 'multitenant-frontend-container', description: 'Docker container name for the frontend')
+        string(name: 'HOST_PORT', defaultValue: '8080', description: 'Host port mapped to the frontend container')
+    }
+
+    stages {
+        stage('Checkout') {
+            steps {
+                checkout scm
+            }
+        }
+
+        stage('Build Frontend Image') {
+            steps {
+                script {
+                    runCommand("docker build -t ${params.IMAGE_NAME}:${env.BUILD_NUMBER} -t ${params.IMAGE_NAME}:latest .")
+                }
+            }
+        }
+
+        stage('Deploy Frontend Container') {
+            steps {
+                script {
+                    runBestEffort("docker rm -f ${params.CONTAINER_NAME}", "docker rm -f ${params.CONTAINER_NAME}")
+                    runCommand("docker run -d --name ${params.CONTAINER_NAME} -p ${params.HOST_PORT}:80 ${params.IMAGE_NAME}:latest")
+                }
+            }
+        }
+
+        stage('Verify Frontend Container') {
+            steps {
+                script {
+                    runCommand("docker ps --filter name=${params.CONTAINER_NAME}")
+                }
+            }
+        }
+    }
+}

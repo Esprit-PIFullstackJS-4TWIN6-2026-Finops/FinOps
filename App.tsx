@@ -1,0 +1,7301 @@
+
+import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
+import { 
+  LayoutDashboard, FileText, Receipt, Users, BarChart3, Settings, 
+  LogOut, Bell, Moon, Sun, Menu, X, Plus, Search, ChevronRight, 
+  History, ShieldCheck, Loader2, Filter, Download, UserPlus, 
+  CreditCard, ExternalLink, MessageSquare, PackageCheck, Briefcase,
+  TrendingUp, Wallet, CheckCircle2, AlertCircle, Clock, Zap, Globe,
+  Sparkles, ArrowRight, BrainCircuit, Building2, Eye, EyeOff, 
+  RefreshCw, ChevronDown, Mail, Hash, CircleDot, Info,
+  Crown, UserCheck, Copy, KeyRound, Trash2, Pencil
+} from 'lucide-react';
+import { 
+  XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, 
+  AreaChart, Area, BarChart, Bar, LineChart, Line
+} from 'recharts';
+import appLogo from './assets/logoFinops.png';
+import { UserRole, User, Tenant, Invoice, Expense, Client, AuditLog, UserPreferences, mapBackendRoleToFrontend } from './types';
+import {
+  BackendAPI as RealAPI,
+  auditFromBackend,
+  checkBackendHealth,
+  clientFromBackend,
+  FINOPS_DATA_CHANGED_EVENT,
+  formatActivityContext,
+  formatActivitySentence,
+  invoiceFromBackend,
+  notifyFinopsDataChanged,
+  type AiAnalyzeExpensesResponse,
+  type AiCashFlowCopilotResponse,
+  type AiExpenseAlertResponse,
+  type AiExpenseForecastResponse,
+  type AiForecastResponse,
+  type AiMonthlyReportResponse,
+  type AiOptimizeCostsResponse,
+  type AiSmartDocumentIntakeResponse,
+  type CompanyBackend,
+  type CompanyJoinRequestBackend,
+  type EmailVerificationRequestResponse,
+  type ExpenseBackend,
+  type NotificationBackend,
+  type TwoFactorLoginChallengeBackend,
+  type TwoFactorSetupBackend,
+  type UserActivityBackend,
+  type UserBackend,
+  type UserListItemBackend,
+  type UserRoleBackend,
+  type UserStatsBackend,
+  type DashboardSummaryBackend,
+} from './api-backend';
+import { getErrorMessage } from './utils/api-errors';
+import {
+  DYNAMIC_TO_STATIC_UI_LANG,
+  LANGUAGES,
+  UiLang,
+  getBaseTranslations,
+  getLangDir,
+  getRuntimeTranslations,
+  isStaticLang,
+  setRuntimeTranslations,
+  t,
+} from './i18n';
+
+function localeForLang(lang: UiLang): string {
+  if (isStaticLang(lang)) {
+    if (lang === 'ar') return 'ar';
+    if (lang === 'fr') return 'fr-FR';
+    return 'en-US';
+  }
+  const s = String(lang);
+  if (s.startsWith('arb') || s.includes('Arab')) return 'ar';
+  if (s.startsWith('fra')) return 'fr-FR';
+  return 'en-US';
+}
+
+/** Explains why a transactional email was not delivered (Gmail / SMTP). */
+function mailNotDeliveredHint(lang: UiLang, mailConfigured?: boolean): string {
+  if (mailConfigured === false) return t('admin.requests.emailNotSentNoTransport', lang);
+  if (mailConfigured === true) return t('admin.requests.emailNotSentSmtpError', lang);
+  return t('admin.requests.emailNotSent', lang);
+}
+
+type ThemePreference = NonNullable<UserPreferences['theme']>;
+
+const THEME_PREFERENCE_STORAGE_KEY = 'finops_theme_preference';
+
+function isThemePreference(value: string | null): value is ThemePreference {
+  return value === 'light' || value === 'dark';
+}
+
+function normalizeThemePreference(value: string | null | undefined): ThemePreference {
+  if (value === 'light') {
+    return 'light';
+  }
+  if (value === 'dark' || value === 'system') {
+    return 'dark';
+  }
+  return 'light';
+}
+
+function getStoredThemePreference(): ThemePreference {
+  const storedPreference = localStorage.getItem(THEME_PREFERENCE_STORAGE_KEY);
+  if (storedPreference === 'system') {
+    return 'dark';
+  }
+  if (isThemePreference(storedPreference)) {
+    return storedPreference;
+  }
+
+  return normalizeThemePreference(localStorage.getItem('theme'));
+}
+
+function resolveIsDarkModeForPreference(theme: ThemePreference): boolean {
+  return theme === 'dark';
+}
+
+/* ================================================================
+   DESIGN SYSTEM – shared atoms
+   ================================================================ */
+
+const ErrorAlert: React.FC<{ message: string; solution?: string; onDismiss?: () => void }> = ({ message, solution, onDismiss }) => (
+  <div className="rounded-2xl bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-800/60 p-4 animate-in fade-in duration-300">
+    <div className="flex items-start gap-3">
+      <div className="p-1.5 bg-rose-100 dark:bg-rose-900/40 rounded-lg shrink-0 mt-0.5"><AlertCircle className="w-4 h-4 text-rose-500" /></div>
+      <div className="flex-1 min-w-0">
+        <p className="font-semibold text-sm text-rose-800 dark:text-rose-200">{message}</p>
+        {solution && <p className="text-xs text-rose-600 dark:text-rose-300/80 mt-1.5 leading-relaxed">{solution}</p>}
+      </div>
+      {onDismiss && (
+        <button onClick={onDismiss} className="p-1 hover:bg-rose-100 dark:hover:bg-rose-900/40 rounded-lg text-rose-400 transition-colors shrink-0"><X size={16} /></button>
+      )}
+    </div>
+  </div>
+);
+
+const SuccessAlert: React.FC<{ message: string; onDismiss?: () => void }> = ({ message, onDismiss }) => (
+  <div className="rounded-2xl bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800/60 p-4 animate-in fade-in duration-300">
+    <div className="flex items-start gap-3">
+      <div className="p-2 bg-emerald-100 dark:bg-emerald-900/60 rounded-xl text-emerald-600 dark:text-emerald-300">
+        <CheckCircle2 size={18} />
+      </div>
+      <div className="flex-1">
+        <p className="font-semibold text-emerald-900 dark:text-emerald-100 mb-1">Success</p>
+        <p className="text-sm text-emerald-700 dark:text-emerald-300">{message}</p>
+      </div>
+      {onDismiss && (
+        <button onClick={onDismiss} className="text-emerald-400 hover:text-emerald-600 transition-colors">
+          <X size={18} />
+        </button>
+      )}
+    </div>
+  </div>
+);
+
+const Badge: React.FC<{ children: React.ReactNode; variant?: 'default' | 'success' | 'warning' | 'danger' | 'info' }> = ({ children, variant = 'default' }) => {
+  const colors = {
+    default: 'bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400',
+    success: 'bg-emerald-50 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400',
+    warning: 'bg-amber-50 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400',
+    danger: 'bg-rose-50 text-rose-700 dark:bg-rose-900/30 dark:text-rose-400',
+    info: 'bg-blue-50 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400',
+  };
+  return <span className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-bold uppercase tracking-wide ${colors[variant]}`}>{children}</span>;
+};
+
+const InputField: React.FC<{
+  label: string; type?: string; value: string; onChange: (v: string) => void;
+  placeholder?: string; required?: boolean; icon?: React.ReactNode; disabled?: boolean;
+}> = ({ label, type = 'text', value, onChange, placeholder, required, icon, disabled }) => {
+  const [showPwd, setShowPwd] = useState(false);
+  const isPassword = type === 'password';
+  return (
+    <div className="space-y-1.5">
+      <label className="block text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider">{label}{required && <span className="text-rose-400 ml-0.5">*</span>}</label>
+      <div className="relative">
+        {icon && <div className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400">{icon}</div>}
+        <input
+          type={isPassword && showPwd ? 'text' : type}
+          value={value}
+          onChange={e => onChange(e.target.value)}
+          required={required}
+          disabled={disabled}
+          placeholder={placeholder}
+          className={`w-full ${icon ? 'pl-11' : 'pl-4'} ${isPassword ? 'pr-11' : 'pr-4'} py-3.5 rounded-xl bg-gray-50 dark:bg-gray-800/80 border border-gray-200 dark:border-gray-700 focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 outline-none font-medium text-gray-900 dark:text-white placeholder-gray-400 transition-all disabled:opacity-50`}
+        />
+        {isPassword && (
+          <button type="button" onClick={() => setShowPwd(!showPwd)} className="absolute right-4 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 transition-colors">
+            {showPwd ? <EyeOff size={18} /> : <Eye size={18} />}
+          </button>
+        )}
+      </div>
+    </div>
+  );
+};
+
+const SelectField: React.FC<{
+  label: string; value: string; onChange: (v: string) => void;
+  options: { value: string; label: string }[]; required?: boolean;
+}> = ({ label, value, onChange, options, required }) => (
+  <div className="space-y-1.5">
+    <label className="block text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider">{label}{required && <span className="text-rose-400 ml-0.5">*</span>}</label>
+    <div className="relative">
+      <select
+        value={value}
+        onChange={e => onChange(e.target.value)}
+        className="w-full px-4 py-3.5 rounded-xl bg-gray-50 dark:bg-gray-800/80 border border-gray-200 dark:border-gray-700 focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 outline-none font-medium text-gray-900 dark:text-white appearance-none pr-10 transition-all"
+      >
+        {options.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+      </select>
+      <ChevronDown size={16} className="absolute right-4 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
+    </div>
+  </div>
+);
+
+const PrimaryButton: React.FC<{ children: React.ReactNode; onClick?: () => void; loading?: boolean; disabled?: boolean; type?: 'button' | 'submit'; className?: string; variant?: 'primary' | 'danger' | 'success' | 'outline' }> = 
+  ({ children, onClick, loading, disabled, type = 'button', className = '', variant = 'primary' }) => {
+  const base = 'inline-flex items-center justify-center gap-2.5 font-bold rounded-xl transition-all active:scale-[0.98] disabled:opacity-50 disabled:pointer-events-none';
+  const variants = {
+    primary: 'bg-primary-600 text-white hover:bg-primary-700 shadow-lg shadow-primary-600/20',
+    danger: 'bg-rose-600 text-white hover:bg-rose-700 shadow-lg shadow-rose-600/20',
+    success: 'bg-emerald-600 text-white hover:bg-emerald-700 shadow-lg shadow-emerald-600/20',
+    outline: 'border-2 border-gray-200 dark:border-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800',
+  };
+  return (
+    <button type={type} onClick={onClick} disabled={disabled || loading} className={`${base} ${variants[variant]} ${className}`}>
+      {loading && <Loader2 size={18} className="animate-spin" />}
+      {children}
+    </button>
+  );
+};
+
+const EmptyState: React.FC<{ icon: React.ReactNode; title: string; description: string; action?: React.ReactNode }> = ({ icon, title, description, action }) => (
+  <div className="flex flex-col items-center justify-center py-16 px-8 text-center">
+    <div className="p-4 bg-gray-100 dark:bg-gray-800 rounded-2xl text-gray-400 dark:text-gray-500 mb-4">{icon}</div>
+    <h3 className="text-lg font-bold text-gray-900 dark:text-white mb-1">{title}</h3>
+    <p className="text-sm text-gray-500 max-w-sm mb-6">{description}</p>
+    {action}
+  </div>
+);
+
+const Card: React.FC<{ children: React.ReactNode; className?: string; hover?: boolean }> = ({ children, className = '', hover }) => (
+  <div className={`bg-white dark:bg-gray-900 rounded-2xl border border-gray-100 dark:border-gray-800 shadow-sm ${hover ? 'hover:shadow-md hover:-translate-y-0.5 transition-all cursor-pointer' : ''} ${className}`}>
+    {children}
+  </div>
+);
+
+const AppLogoMark: React.FC<{ className?: string; alt?: string }> = ({
+  className = '',
+  alt = 'FinOps logo',
+}) => (
+  <img
+    src={appLogo}
+    alt={alt}
+    className={`shrink-0 object-contain ${className}`}
+  />
+);
+
+const AppBrandLockup: React.FC<{
+  logoClassName?: string;
+  textClassName?: string;
+  className?: string;
+}> = ({ logoClassName = 'h-[54px] w-[54px]', textClassName = 'font-bold text-lg tracking-tight text-gray-900 dark:text-white', className = '' }) => (
+  <div className={`flex items-center gap-3 ${className}`}>
+    <AppLogoMark className={logoClassName} />
+    <span className={textClassName}>FinOps</span>
+  </div>
+);
+
+const PageHeader: React.FC<{ title: string; description?: string; actions?: React.ReactNode }> = ({ title, description, actions }) => (
+  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+    <div>
+      <h1 className="text-2xl font-bold text-gray-900 dark:text-white">{title}</h1>
+      {description && <p className="text-sm text-gray-500 mt-1">{description}</p>}
+    </div>
+    {actions && <div className="flex items-center gap-2 shrink-0">{actions}</div>}
+  </div>
+);
+
+/* ================================================================
+   DATA
+   ================================================================ */
+
+const REVENUE_DATA = [
+  { name: 'Jan', revenue: 4000, expenses: 2400 },
+  { name: 'Feb', revenue: 3000, expenses: 1398 },
+  { name: 'Mar', revenue: 5000, expenses: 2800 },
+  { name: 'Apr', revenue: 2780, expenses: 3908 },
+  { name: 'May', revenue: 4890, expenses: 2800 },
+  { name: 'Jun', revenue: 6390, expenses: 3800 },
+];
+
+const COMPANY_CATEGORIES = [
+  { value: 'technology', label: 'Technologie' },
+  { value: 'retail', label: 'Commerce' },
+  { value: 'services', label: 'Services' },
+  { value: 'manufacturing', label: 'Industrie' },
+  { value: 'construction', label: 'BTP' },
+  { value: 'healthcare', label: 'Santé' },
+  { value: 'finance', label: 'Finance' },
+  { value: 'other', label: 'Autre' },
+];
+
+function roleJobSelectOptions(lang: UiLang) {
+  return [
+    { value: 'manager', label: t('erole.manager', lang) },
+    { value: 'employee', label: t('erole.employee', lang) },
+    { value: 'accountant', label: t('erole.accountant', lang) },
+  ];
+}
+
+function roleJobLabel(role: string, lang: UiLang): string {
+  if (role === 'manager') return t('erole.manager', lang);
+  if (role === 'accountant') return t('erole.accountant', lang);
+  if (role === 'owner') return t('erole.owner', lang);
+  return t('erole.employee', lang);
+}
+
+function companyCategoryOptions(lang: UiLang) {
+  return COMPANY_CATEGORIES.map((c) => ({ value: c.value, label: t(`cat.${c.value}`, lang) }));
+}
+
+function invoiceStatusLabel(status: string, lang: UiLang): string {
+  const k = `inv.status.${status}`;
+  const v = t(k, lang);
+  return v !== k ? v : status;
+}
+
+function forecastTrendLabel(trend: string, lang: UiLang): string {
+  const k = `ai.forecast.trend.${trend}`;
+  const v = t(k, lang);
+  return v !== k ? v : trend;
+}
+
+function downloadCsv(filename: string, rows: Array<Record<string, string | number>>) {
+  if (!rows.length) return;
+  const headers = Object.keys(rows[0]);
+  const content = [
+    headers.join(','),
+    ...rows.map((row) => headers.map((h) => JSON.stringify(row[h] ?? '')).join(',')),
+  ].join('\n');
+  const blob = new Blob([content], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+function downloadBlob(filename: string, blob: Blob) {
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement('a');
+  anchor.href = url;
+  anchor.download = filename;
+  anchor.click();
+  URL.revokeObjectURL(url);
+}
+
+function avatarFallback(name: string) {
+  return `https://ui-avatars.com/api/?name=${encodeURIComponent(name)}&background=2563eb&color=fff&bold=true`;
+}
+
+function preferenceLanguageToUiLang(code: string | undefined | null): UiLang | null {
+  if (code == null || String(code).trim() === '') return null;
+  const raw = String(code).trim();
+  const hyphen = raw.replace(/_/g, '-');
+  if (isStaticLang(raw)) return raw;
+  const mapped = DYNAMIC_TO_STATIC_UI_LANG[raw];
+  if (mapped) return mapped;
+  if (/^[a-z]{3}_[A-Za-z]+$/.test(raw)) return raw;
+  const asUnderscore = hyphen.replace(/-/g, '_');
+  if (/^[a-z]{3}_[A-Za-z]+$/.test(asUnderscore)) return asUnderscore;
+  const primary = hyphen.split('-')[0]?.toLowerCase() ?? '';
+  if (primary === 'fr' || primary === 'fra') return 'fr';
+  if (primary === 'en' || primary === 'eng') return 'en';
+  if (primary === 'ar' || primary === 'arb') return 'ar';
+  return null;
+}
+
+/** Si le serveur n’a pas de langue enregistrée, garde celle du navigateur (évite l’écrasement après connexion). */
+function resolveSessionUiLang(
+  profileLanguage: string | undefined | null,
+  storedRaw: string | null,
+): UiLang | null {
+  const explicitProfile =
+    profileLanguage != null && String(profileLanguage).trim() !== '';
+  const fromProf = preferenceLanguageToUiLang(profileLanguage);
+  if (explicitProfile && fromProf) return fromProf;
+  const fromStore = preferenceLanguageToUiLang(storedRaw);
+  if (fromStore) return fromStore;
+  return fromProf;
+}
+
+/** Même langue UI pour fr / fra_Latn / eng_Latn → en, etc. */
+function normalizeUiLangToken(code: UiLang): string {
+  return String(DYNAMIC_TO_STATIC_UI_LANG[code] ?? code);
+}
+
+function syncDocumentToUiLang(next: UiLang) {
+  document.documentElement.dir = getLangDir(next);
+  document.documentElement.lang = isStaticLang(next) ? next : String(next).slice(0, 3).toLowerCase();
+}
+
+function resolvePickedUiLang(next: UiLang): UiLang {
+  return (DYNAMIC_TO_STATIC_UI_LANG[next] ?? next) as UiLang;
+}
+
+function mapBackendUserToFrontendUser(user: UserBackend): User {
+  let prefs = user.preferences;
+  if (typeof prefs === 'string') {
+    try {
+      prefs = JSON.parse(prefs) as User['preferences'];
+    } catch {
+      prefs = undefined;
+    }
+  }
+  return {
+    id: user.id,
+    email: user.email,
+    name: user.name,
+    role: mapBackendRoleToFrontend(user.role),
+    companyRole: user.companyRole,
+    avatarUrl: user.avatarUrl,
+    companyId: user.companyId,
+    activeCompanyId: user.activeCompanyId,
+    mustChangePassword: user.mustChangePassword,
+    emailVerified: user.emailVerified,
+    emailVerifiedAt: user.emailVerifiedAt,
+    pendingEmail: user.pendingEmail,
+    lastLoginAt: user.lastLoginAt,
+    locked: user.locked,
+    lockReason: user.lockReason,
+    lockedUntil: user.lockedUntil,
+    preferences: prefs,
+    twoFactorEnabled: user.twoFactorEnabled,
+    twoFactorEnrolledAt: user.twoFactorEnrolledAt,
+    twoFactorLastVerifiedAt: user.twoFactorLastVerifiedAt,
+    createdAt: user.createdAt,
+    updatedAt: user.updatedAt,
+    company: user.company,
+  };
+}
+
+function backendRoleLabel(role: string, lang: UiLang): string {
+  if (role === 'platform_admin') return t('role.platformAdminLabel', lang);
+  if (role === 'client') return t('auth.roleClient', lang);
+  return roleJobLabel(role, lang);
+}
+
+function roleBadgeVariant(role?: string): 'default' | 'success' | 'warning' | 'danger' | 'info' {
+  if (role === 'platform_admin') return 'danger';
+  if (role === 'owner') return 'success';
+  if (role === 'manager') return 'info';
+  if (role === 'accountant') return 'warning';
+  return 'default';
+}
+
+function formatDateTime(value: string | undefined, lang: UiLang, fallback = '—') {
+  if (!value) return fallback;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return fallback;
+  return date.toLocaleString(localeForLang(lang), {
+    dateStyle: 'medium',
+    timeStyle: 'short',
+  });
+}
+
+function normalizeVerificationCode(value: string): string {
+  return value.replace(/\D/g, '').slice(0, 6);
+}
+
+const ADVANCED_NLLB_LANGUAGES: Array<{
+  code: string;
+  label: string;
+  flag: string;
+  dir: 'ltr' | 'rtl';
+}> = [
+  { code: 'spa_Latn', label: 'Español', flag: '🇪🇸', dir: 'ltr' },
+  { code: 'deu_Latn', label: 'Deutsch', flag: '🇩🇪', dir: 'ltr' },
+  { code: 'ita_Latn', label: 'Italiano', flag: '🇮🇹', dir: 'ltr' },
+  { code: 'por_Latn', label: 'Português', flag: '🇵🇹', dir: 'ltr' },
+  { code: 'tur_Latn', label: 'Türkçe', flag: '🇹🇷', dir: 'ltr' },
+  { code: 'rus_Cyrl', label: 'Русский', flag: '🇷🇺', dir: 'ltr' },
+  { code: 'zho_Hans', label: '中文(简体)', flag: '🇨🇳', dir: 'ltr' },
+  { code: 'hin_Deva', label: 'हिन्दी', flag: '🇮🇳', dir: 'ltr' },
+];
+
+type LanguageOption = {
+  code: UiLang;
+  label: string;
+  flag: string;
+  dir: 'ltr' | 'rtl';
+};
+
+const NLLB_LANGUAGE_META: Record<string, { label: string; flag: string; dir: 'ltr' | 'rtl' }> = {
+  eng_Latn: { label: 'English', flag: '🇬🇧', dir: 'ltr' },
+  fra_Latn: { label: 'Français', flag: '🇫🇷', dir: 'ltr' },
+  arb_Arab: { label: 'العربية', flag: '🇸🇦', dir: 'rtl' },
+  spa_Latn: { label: 'Español', flag: '🇪🇸', dir: 'ltr' },
+  deu_Latn: { label: 'Deutsch', flag: '🇩🇪', dir: 'ltr' },
+  ita_Latn: { label: 'Italiano', flag: '🇮🇹', dir: 'ltr' },
+  por_Latn: { label: 'Português', flag: '🇵🇹', dir: 'ltr' },
+  tur_Latn: { label: 'Türkçe', flag: '🇹🇷', dir: 'ltr' },
+  rus_Cyrl: { label: 'Русский', flag: '🇷🇺', dir: 'ltr' },
+  zho_Hans: { label: '中文(简体)', flag: '🇨🇳', dir: 'ltr' },
+  hin_Deva: { label: 'हिन्दी', flag: '🇮🇳', dir: 'ltr' },
+};
+
+const NLLB_ROOT_TO_FLAG: Record<string, string> = {
+  eng: '🇬🇧',
+  fra: '🇫🇷',
+  arb: '🇸🇦',
+  spa: '🇪🇸',
+  deu: '🇩🇪',
+  ita: '🇮🇹',
+  por: '🇵🇹',
+  tur: '🇹🇷',
+  rus: '🇷🇺',
+  zho: '🇨🇳',
+  hin: '🇮🇳',
+  jpn: '🇯🇵',
+  kor: '🇰🇷',
+  nld: '🇳🇱',
+  pol: '🇵🇱',
+  ukr: '🇺🇦',
+  ron: '🇷🇴',
+  ces: '🇨🇿',
+  swe: '🇸🇪',
+  dan: '🇩🇰',
+  fin: '🇫🇮',
+  ell: '🇬🇷',
+  heb: '🇮🇱',
+  tha: '🇹🇭',
+  ind: '🇮🇩',
+  msa: '🇲🇾',
+  vie: '🇻🇳',
+};
+
+/** Aligned with backend AiService.fallbackNllbLanguages — avoids resetting saved lang before /ai/languages responds. */
+const FALLBACK_NLLB_LANGUAGE_CODES: string[] = [
+  'eng_Latn', 'fra_Latn', 'arb_Arab', 'spa_Latn', 'deu_Latn', 'ita_Latn', 'por_Latn', 'tur_Latn',
+  'rus_Cyrl', 'zho_Hans', 'hin_Deva', 'jpn_Jpan', 'kor_Hang', 'nld_Latn', 'pol_Latn', 'ukr_Cyrl',
+  'ron_Latn', 'ces_Latn', 'swe_Latn', 'dan_Latn', 'fin_Latn', 'ell_Grek', 'heb_Hebr', 'tha_Thai',
+  'ind_Latn', 'msa_Latn', 'vie_Latn',
+];
+
+function buildDynamicLanguageOption(code: string): LanguageOption {
+  const known = NLLB_LANGUAGE_META[code];
+  if (known) return { code, ...known };
+
+  const [langPart = code, scriptPart = ''] = code.split('_');
+  const dir = scriptPart === 'Arab' || scriptPart === 'Hebr' ? 'rtl' : 'ltr';
+  return {
+    code,
+    label: code,
+    flag: NLLB_ROOT_TO_FLAG[langPart] ?? '🏳️',
+    dir,
+  };
+}
+
+/* ================================================================
+   APP ROOT
+   ================================================================ */
+
+/* ================================================================
+   LANGUAGE SWITCHER COMPONENT
+   ================================================================ */
+
+const LanguageSwitcher: React.FC<{
+  lang: UiLang;
+  setLang: (l: UiLang) => void;
+  options?: LanguageOption[];
+  compact?: boolean;
+  isLoading?: boolean;
+  unavailableMessage?: string | null;
+}> = ({ lang, setLang, options, compact, isLoading = false, unavailableMessage }) => {
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState('');
+  const fallbackOptions = useMemo<LanguageOption[]>(
+    () => [
+      ...LANGUAGES.map((l) => ({ ...l, code: l.code as UiLang })),
+      ...ADVANCED_NLLB_LANGUAGES.map((l) => ({ ...l, code: l.code as UiLang })),
+    ],
+    [],
+  );
+  const availableOptions = options ?? fallbackOptions;
+  const activeToken = normalizeUiLangToken(lang);
+  const filteredOptions = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return availableOptions;
+    return availableOptions.filter((option) => {
+      const label = option.label.toLowerCase();
+      const code = String(option.code).toLowerCase();
+      return label.includes(q) || code.includes(q);
+    });
+  }, [availableOptions, query]);
+  const current = availableOptions.find((l) => normalizeUiLangToken(l.code) === activeToken) ?? {
+    code: lang,
+    label: String(lang),
+    flag: '🏳️',
+    dir: getLangDir(lang),
+  };
+  return (
+    <div className="relative">
+      <button
+        type="button"
+        onClick={() => setOpen(!open)}
+        className={`flex items-center gap-2 ${compact ? 'p-2' : 'px-3 py-2'} hover:bg-gray-100 dark:hover:bg-gray-800 rounded-xl text-gray-500 dark:text-gray-400 transition-colors text-sm font-medium`}
+        title={t('lang.switcher.title', lang)}
+      >
+        {isLoading ? <Loader2 size={18} className="animate-spin" /> : <Globe size={18} />}
+        {!compact && <span>{current.flag} {current.label}</span>}
+        {compact && <span>{current.flag}</span>}
+        <ChevronDown size={14} />
+      </button>
+      {open && (
+        <>
+          <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
+          <div
+            dir={getLangDir(lang)}
+            className="absolute end-0 top-full mt-1 z-50 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-xl shadow-xl overflow-auto max-h-80 min-w-[230px]"
+          >
+            <div className="p-2 border-b border-gray-100 dark:border-gray-800">
+              <div className="relative">
+                <Search size={14} className="absolute start-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
+                <input
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                  placeholder={t('lang.switcher.search', lang)}
+                  className="w-full ps-8 pe-3 py-2 text-xs rounded-lg bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 text-gray-700 dark:text-gray-200 outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500"
+                />
+              </div>
+            </div>
+            {filteredOptions.map((l) => {
+              const selected = normalizeUiLangToken(l.code) === activeToken;
+              return (
+              <button
+                key={String(l.code)}
+                onClick={() => { setLang(l.code); setOpen(false); setQuery(''); }}
+                className={`w-full flex items-center gap-3 px-4 py-2.5 text-sm font-medium transition-colors ${
+                  selected
+                    ? 'bg-primary-50 dark:bg-primary-900/20 text-primary-600'
+                    : 'text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800'
+                }`}
+              >
+                <span className="text-lg">{l.flag}</span>
+                <span>{l.label}</span>
+                {selected && <CheckCircle2 size={14} className="ml-auto text-primary-500" />}
+              </button>
+            );})}
+            {!filteredOptions.length && (
+              <p className="px-4 py-3 text-xs text-gray-500 dark:text-gray-400">{t('lang.switcher.empty', lang)}</p>
+            )}
+            {unavailableMessage && (
+              <p className="px-4 py-2.5 text-[11px] border-t border-amber-200 dark:border-amber-900/50 bg-amber-50 dark:bg-amber-900/20 text-amber-700 dark:text-amber-300">
+                {unavailableMessage}
+              </p>
+            )}
+          </div>
+        </>
+      )}
+    </div>
+  );
+};
+
+const App: React.FC = () => {
+  const [themePreference, setThemePreference] = useState<ThemePreference>(() =>
+    getStoredThemePreference(),
+  );
+  const [isDarkMode, setIsDarkMode] = useState(() =>
+    resolveIsDarkModeForPreference(getStoredThemePreference()),
+  );
+  const [lang, setLangState] = useState<UiLang>(() => localStorage.getItem('finops_lang') || 'fr');
+  const [availableDynamicLangs, setAvailableDynamicLangs] = useState<string[]>(() => [...FALLBACK_NLLB_LANGUAGE_CODES]);
+  const [isTranslatingUi, setIsTranslatingUi] = useState(false);
+  const [isSidebarOpen, setIsSidebarOpen] = useState(true);
+  const [activeTab, setActiveTab] = useState('dashboard');
+  const [user, setUser] = useState<User | null>(null);
+  const [tenant, setTenant] = useState<Tenant | null>(null);
+  const [isAppLoading, setIsAppLoading] = useState(true);
+  const [showAuth, setShowAuth] = useState(false);
+  const [authMode, setAuthMode] = useState<'login' | 'register' | 'register-business'>('login');
+  const [showRegisterBusiness, setShowRegisterBusiness] = useState(false);
+  const useRealBackend = true;
+  const [connectionError, setConnectionError] = useState<string | null>(null);
+  const [translationServiceAvailable, setTranslationServiceAvailable] = useState(true);
+  const [translationCatalogReady, setTranslationCatalogReady] = useState(false);
+  const [userCompanies, setUserCompanies] = useState<CompanyBackend[]>([]);
+  const [companySwitching, setCompanySwitching] = useState(false);
+  const [companyActionError, setCompanyActionError] = useState<string | null>(null);
+  const [notifications, setNotifications] = useState<NotificationBackend[]>([]);
+  const [unreadNotificationsCount, setUnreadNotificationsCount] = useState(0);
+  const [isNotificationPanelOpen, setIsNotificationPanelOpen] = useState(false);
+  const lastPersistedLangKey = useRef<string | null>(null);
+  const languageOptions = useMemo<LanguageOption[]>(() => {
+    const staticOptions: LanguageOption[] = LANGUAGES.map((l) => ({ ...l, code: l.code as UiLang }));
+    const staticCodes = new Set(staticOptions.map((l) => String(l.code)));
+    const dynamicOptions = availableDynamicLangs
+      .filter((code) => !staticCodes.has(code) && !DYNAMIC_TO_STATIC_UI_LANG[code])
+      .map((code) => buildDynamicLanguageOption(code));
+    return [...staticOptions, ...dynamicOptions];
+  }, [availableDynamicLangs]);
+  const translationUnavailableMessage = useMemo(() => {
+    if (translationServiceAvailable) return null;
+    if (lang === 'fr') return 'Service de traduction indisponible: fallback en anglais.';
+    if (lang === 'ar') return 'خدمة الترجمة غير متاحة حاليا: سيتم استخدام الإنجليزية مؤقتا.';
+    return 'Translation service unavailable: using English fallback.';
+  }, [translationServiceAvailable, lang]);
+
+  const pickUiLanguage = useCallback((next: UiLang) => {
+    const resolved = resolvePickedUiLang(next);
+    setLangState(resolved);
+    localStorage.setItem('finops_lang', String(resolved));
+    syncDocumentToUiLang(resolved);
+  }, []);
+
+  useEffect(() => {
+    const init = async () => {
+      setConnectionError(null);
+      try {
+        const healthy = await checkBackendHealth();
+        if (!healthy) { setConnectionError('BACKEND_DOWN'); setIsAppLoading(false); return; }
+        const realUser = await RealAPI.getMe();
+        if (realUser) {
+          const mappedUser = mapBackendUserToFrontendUser(realUser);
+          setUser(mappedUser);
+          const sessionLang = resolveSessionUiLang(
+            mappedUser.preferences?.language,
+            localStorage.getItem('finops_lang'),
+          );
+          if (sessionLang) pickUiLanguage(sessionLang);
+          if (realUser.companyId) {
+            const company = await RealAPI.getCompany(realUser.companyId);
+            if (company) setTenant({ id: company.id, name: company.name, logo: company.logo, currency: company.currency, taxRate: company.taxRate });
+          }
+        }
+      } catch { setConnectionError('BACKEND_DOWN'); }
+      setIsAppLoading(false);
+    };
+    init();
+  }, []);
+
+  useEffect(() => {
+    const loadAvailableLanguages = async () => {
+      try {
+        const result = await RealAPI.getTranslationLanguages();
+        if (Array.isArray(result.languages) && result.languages.length) {
+          setAvailableDynamicLangs((prev) => Array.from(new Set([...prev, ...result.languages])));
+        }
+        setTranslationServiceAvailable(true);
+      } catch {
+        setTranslationServiceAvailable(false);
+        // Keep default language list if translation service languages cannot be loaded.
+      } finally {
+        setTranslationCatalogReady(true);
+      }
+    };
+    void loadAvailableLanguages();
+  }, []);
+
+  useEffect(() => {
+    if (!user?.id || !useRealBackend) {
+      lastPersistedLangKey.current = null;
+      return;
+    }
+    const stable = String(DYNAMIC_TO_STATIC_UI_LANG[lang] ?? lang);
+    const key = `${user.id}:${stable}`;
+    if (lastPersistedLangKey.current === key) return;
+    lastPersistedLangKey.current = key;
+    void RealAPI.updateMyPreferences({ language: stable }).catch(() => {
+      if (lastPersistedLangKey.current === key) lastPersistedLangKey.current = null;
+    });
+  }, [lang, user?.id, useRealBackend]);
+
+  useEffect(() => {
+    const nextIsDark = themePreference === 'dark';
+    setIsDarkMode(nextIsDark);
+    if (nextIsDark) {
+      document.documentElement.classList.add('dark');
+      localStorage.setItem('theme', 'dark');
+    } else {
+      document.documentElement.classList.remove('dark');
+      localStorage.setItem('theme', 'light');
+    }
+    localStorage.setItem(THEME_PREFERENCE_STORAGE_KEY, themePreference);
+  }, [themePreference]);
+
+  useEffect(() => {
+    const mapped = DYNAMIC_TO_STATIC_UI_LANG[lang];
+    if (mapped && mapped !== lang) {
+      pickUiLanguage(lang);
+      return;
+    }
+    localStorage.setItem('finops_lang', String(lang));
+    syncDocumentToUiLang(lang);
+  }, [lang, pickUiLanguage]);
+
+  useEffect(() => {
+    const nextTheme = user?.preferences?.theme;
+    if (nextTheme) {
+      setThemePreference(normalizeThemePreference(nextTheme));
+    }
+  }, [user?.id, user?.preferences?.theme]);
+
+  useEffect(() => {
+    const loadUserCompanies = async () => {
+      if (!user || !useRealBackend) {
+        setUserCompanies([]);
+        return;
+      }
+      if (
+        user.role !== UserRole.BUSINESS_OWNER &&
+        user.role !== UserRole.BUSINESS_ADMIN &&
+        user.role !== UserRole.ACCOUNTANT &&
+        user.role !== UserRole.TEAM_MEMBER
+      ) {
+        setUserCompanies([]);
+        return;
+      }
+      try {
+        const companies = await RealAPI.getMyCompanies();
+        setUserCompanies(companies);
+      } catch {
+        // Keep current tenant context if loading companies fails.
+      }
+    };
+    void loadUserCompanies();
+  }, [user, useRealBackend]);
+
+  useEffect(() => {
+    if (!user || !useRealBackend) {
+      setNotifications([]);
+      setUnreadNotificationsCount(0);
+      return;
+    }
+
+    let cancelled = false;
+    const loadNotifications = async () => {
+      try {
+        const [list, unread] = await Promise.all([
+          RealAPI.getNotifications(),
+          RealAPI.getUnreadNotificationsCount(),
+        ]);
+        if (cancelled) return;
+        setNotifications(list);
+        setUnreadNotificationsCount(unread);
+      } catch {
+        if (cancelled) return;
+        setNotifications([]);
+        setUnreadNotificationsCount(0);
+      }
+    };
+
+    void loadNotifications();
+    const timer = window.setInterval(() => {
+      void loadNotifications();
+    }, 15000);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [user, useRealBackend]);
+
+  useEffect(() => {
+    if (!translationCatalogReady) return;
+    if (isStaticLang(lang)) return;
+    const mine = normalizeUiLangToken(lang);
+    const inCatalog = languageOptions.some(
+      (o) => normalizeUiLangToken(o.code) === mine || String(o.code) === String(lang),
+    );
+    if (!inCatalog) pickUiLanguage('fr');
+  }, [lang, languageOptions, translationCatalogReady, pickUiLanguage]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const loadRuntimeTranslations = async () => {
+      if (isStaticLang(lang) || getRuntimeTranslations(lang)) return;
+      setIsTranslatingUi(true);
+      const english = getBaseTranslations('en');
+      const keys = Object.keys(english);
+      try {
+        const texts = keys.map((k) => english[k]);
+        const result = await RealAPI.translateBatch({
+          texts,
+          source_lang: 'eng_Latn',
+          target_lang: lang,
+        });
+        if (cancelled) return;
+        const tr = Array.isArray(result.translations) ? result.translations : [];
+        const dynamicValues = keys.reduce<Record<string, string>>((acc, key, idx) => {
+          const piece = tr[idx];
+          const use =
+            piece != null && String(piece).trim() !== '' ? String(piece) : english[key] ?? key;
+          acc[key] = use;
+          return acc;
+        }, {});
+        setRuntimeTranslations(lang, dynamicValues);
+        setTranslationServiceAvailable(true);
+      } catch {
+        if (cancelled) return;
+        setRuntimeTranslations(lang, { ...english });
+        setTranslationServiceAvailable(false);
+      } finally {
+        if (!cancelled) setIsTranslatingUi(false);
+      }
+    };
+    void loadRuntimeTranslations();
+    return () => {
+      cancelled = true;
+    };
+  }, [lang]);
+
+  const handleLogin = async (u: User, mustChangePassword?: boolean) => {
+    setUser({ ...u, mustChangePassword });
+    const sessionLang = resolveSessionUiLang(
+      u.preferences?.language,
+      localStorage.getItem('finops_lang'),
+    );
+    if (sessionLang) pickUiLanguage(sessionLang);
+    if (u.companyId) {
+      try {
+        const company = await RealAPI.getCompany(u.companyId);
+        if (company) setTenant({ id: company.id, name: company.name, logo: company.logo, currency: company.currency, taxRate: company.taxRate });
+      } catch {}
+    }
+  };
+
+  const handleToggleTheme = () => {
+    setThemePreference(isDarkMode ? 'light' : 'dark');
+  };
+
+  const handleLogout = async () => {
+    RealAPI.logout();
+    setUser(null); setTenant(null); setShowAuth(false); setActiveTab('dashboard');
+  };
+
+  const handleSwitchCompany = async (nextCompanyId: string) => {
+    if (!nextCompanyId || !user || user.companyId === nextCompanyId) return;
+    setCompanySwitching(true);
+    setCompanyActionError(null);
+    try {
+      await RealAPI.switchCompany(nextCompanyId);
+      const company = await RealAPI.getCompany(nextCompanyId);
+      setTenant({ id: company.id, name: company.name, logo: company.logo, currency: company.currency, taxRate: company.taxRate });
+      setUser({ ...user, companyId: nextCompanyId, activeCompanyId: nextCompanyId });
+      if (activeTab === 'employees' && (user.role === UserRole.TEAM_MEMBER || user.role === UserRole.ACCOUNTANT)) {
+        setActiveTab('dashboard');
+      }
+    } catch (err) {
+      const { message } = getErrorMessage(err);
+      setCompanyActionError(message);
+    } finally {
+      setCompanySwitching(false);
+    }
+  };
+
+  const handleCreateCompany = async () => {
+    if (!user || user.role !== UserRole.BUSINESS_OWNER) return;
+    const name = window.prompt(t('company.promptNewName', lang));
+    if (!name || !name.trim()) return;
+    const categoryInput = window.prompt(t('company.promptCategory', lang), 'other');
+    const category = (categoryInput || 'other').trim() as CompanyBackend['category'];
+    setCompanySwitching(true);
+    setCompanyActionError(null);
+    try {
+      const created = await RealAPI.createCompany({ name: name.trim(), category });
+      const companies = await RealAPI.getMyCompanies();
+      setUserCompanies(companies);
+      await handleSwitchCompany(created.id);
+    } catch (err) {
+      const { message } = getErrorMessage(err);
+      setCompanyActionError(message);
+      setCompanySwitching(false);
+    }
+  };
+
+  const handleMarkNotificationAsRead = async (id: string) => {
+    setNotifications((prev) =>
+      prev.map((n) => (n.id === id ? { ...n, readAt: n.readAt || new Date().toISOString() } : n)),
+    );
+    setUnreadNotificationsCount((prev) => Math.max(0, prev - 1));
+    try {
+      await RealAPI.markNotificationAsRead(id);
+    } catch {
+      // Ignore optimistic update rollback to keep UX smooth.
+    }
+  };
+
+  const handleMarkAllNotificationsAsRead = async () => {
+    const now = new Date().toISOString();
+    setNotifications((prev) => prev.map((n) => ({ ...n, readAt: n.readAt || now })));
+    setUnreadNotificationsCount(0);
+    try {
+      await RealAPI.markAllNotificationsAsRead();
+    } catch {
+      // Ignore optimistic update rollback to keep UX smooth.
+    }
+  };
+
+  /* ---- SCREENS ---- */
+
+  if (isAppLoading) {
+    return (
+      <div className="relative min-h-screen bg-white dark:bg-gray-950 flex flex-col items-center justify-center gap-6">
+        <div className="absolute top-4 end-4 z-10">
+          <LanguageSwitcher
+            lang={lang}
+            setLang={pickUiLanguage}
+            options={languageOptions}
+            compact
+            isLoading={isTranslatingUi}
+            unavailableMessage={translationUnavailableMessage}
+          />
+        </div>
+        <div className="relative">
+          <AppLogoMark className="w-24 h-24" />
+          <Loader2 size={20} className="absolute -bottom-1 -right-1 text-primary-600 animate-spin" />
+        </div>
+        <div className="text-center space-y-1">
+          <p className="text-lg font-bold text-gray-900 dark:text-white">{t('loading.brand', lang)}</p>
+          <p className="text-sm text-gray-400 animate-pulse">{t('loading.connecting', lang)}</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (connectionError === 'BACKEND_DOWN') {
+    const handleRetry = async () => {
+      setIsAppLoading(true); setConnectionError(null);
+      const ok = await checkBackendHealth();
+      if (ok) {
+        try {
+          const u = await RealAPI.getMe();
+          if (u) {
+            const mapped = mapBackendUserToFrontendUser(u);
+            setUser(mapped);
+            const sessionLang = resolveSessionUiLang(
+              mapped.preferences?.language,
+              localStorage.getItem('finops_lang'),
+            );
+            if (sessionLang) pickUiLanguage(sessionLang);
+            if (u.companyId) { const c = await RealAPI.getCompany(u.companyId); if (c) setTenant({ id: c.id, name: c.name, logo: c.logo, currency: c.currency, taxRate: c.taxRate }); }
+          }
+        } catch {}
+      } else { setConnectionError('BACKEND_DOWN'); }
+      setIsAppLoading(false);
+    };
+    const handleDemoMode = () => {
+      window.alert(t('conn.backendAlert', lang));
+    };
+    return (
+      <div className="min-h-screen bg-gray-50 dark:bg-gray-950 flex items-center justify-center p-6">
+        <Card className="max-w-lg w-full p-8 sm:p-10">
+          <div className="flex justify-between items-start mb-6">
+            <div className="flex justify-center flex-1">
+              <div className="w-14 h-14 bg-amber-100 dark:bg-amber-900/30 rounded-2xl flex items-center justify-center">
+                <AlertCircle size={28} className="text-amber-500" />
+              </div>
+            </div>
+            <LanguageSwitcher lang={lang} setLang={pickUiLanguage} options={languageOptions} compact isLoading={isTranslatingUi} unavailableMessage={translationUnavailableMessage} />
+          </div>
+          <h1 className="text-xl font-bold text-gray-900 dark:text-white text-center mb-2">{t('conn.title', lang)}</h1>
+          <p className="text-sm text-gray-500 text-center mb-6">{t('conn.desc', lang)}</p>
+          <div className="bg-gray-50 dark:bg-gray-800/60 rounded-xl p-4 text-sm text-gray-600 dark:text-gray-300 mb-6 border border-gray-100 dark:border-gray-700">
+            <p className="font-semibold text-gray-900 dark:text-white mb-2 flex items-center gap-2"><Info size={16} className="text-primary-500" /> {t('conn.instructions', lang)}</p>
+            <ol className="list-decimal list-inside space-y-1.5 text-xs">
+              <li>{t('conn.step1', lang)}</li>
+              <li>{t('conn.step2', lang)} <code className="bg-gray-200 dark:bg-gray-700 px-1.5 py-0.5 rounded text-primary-600 dark:text-primary-400 font-mono">cd backend</code></li>
+              <li>{t('conn.step3', lang)} <code className="bg-gray-200 dark:bg-gray-700 px-1.5 py-0.5 rounded text-primary-600 dark:text-primary-400 font-mono">npm run start:dev</code></li>
+              <li>{t('conn.step4', lang)} <code className="bg-gray-200 dark:bg-gray-700 px-1.5 py-0.5 rounded font-mono">{t('conn.apiRunningMsg', lang)}</code></li>
+              <li>{t('conn.step5', lang)} <strong>{t('conn.retry', lang)}</strong></li>
+            </ol>
+          </div>
+          <div className="flex flex-col sm:flex-row gap-3">
+            <PrimaryButton onClick={handleRetry} className="flex-1 py-3.5 text-sm"><RefreshCw size={16} /> {t('conn.retry', lang)}</PrimaryButton>
+            <PrimaryButton onClick={handleDemoMode} variant="outline" className="flex-1 py-3.5 text-sm">{t('conn.demoMode', lang)}</PrimaryButton>
+          </div>
+          <p className="text-[11px] text-gray-400 text-center mt-4">{t('conn.demoNote', lang)}</p>
+          <p className="text-[11px] text-amber-700/90 dark:text-amber-300/90 text-center mt-3 max-w-md mx-auto leading-relaxed">{t('conn.dbHint', lang)}</p>
+        </Card>
+      </div>
+    );
+  }
+
+  if (!user) {
+    if (showRegisterBusiness) {
+      return <BusinessRegistrationView lang={lang} setLang={pickUiLanguage} languageOptions={languageOptions} translationUnavailableMessage={translationUnavailableMessage} onSuccess={() => { setShowRegisterBusiness(false); setAuthMode('login'); setShowAuth(true); }} onCancel={() => setShowRegisterBusiness(false)} />;
+    }
+    if (showAuth) {
+      return <AuthView lang={lang} setLang={pickUiLanguage} languageOptions={languageOptions} translationUnavailableMessage={translationUnavailableMessage} mode={authMode} setMode={setAuthMode} onLogin={handleLogin} useRealBackend={useRealBackend} onCancel={() => setShowAuth(false)} onShowRegisterBusiness={() => { setShowAuth(false); setShowRegisterBusiness(true); }} />;
+    }
+    return <LandingPageView lang={lang} setLang={pickUiLanguage} languageOptions={languageOptions} translationUnavailableMessage={translationUnavailableMessage} isDarkMode={isDarkMode} onToggleTheme={handleToggleTheme} onEnter={() => { setAuthMode('login'); setShowAuth(true); }} onGetStarted={() => setShowRegisterBusiness(true)} />;
+  }
+
+  if (user.mustChangePassword) {
+    return (
+      <ChangePasswordModal
+        lang={lang}
+        setLang={pickUiLanguage}
+        languageOptions={languageOptions}
+        translationUnavailableMessage={translationUnavailableMessage}
+        isTranslatingUi={isTranslatingUi}
+        onSuccess={() => setUser({ ...user, mustChangePassword: false })}
+      />
+    );
+  }
+
+  const isClient = user.role === UserRole.CLIENT;
+  const canManagePlatformUsers =
+    user.role === UserRole.PLATFORM_ADMIN ||
+    user.role === UserRole.BUSINESS_OWNER ||
+    user.role === UserRole.BUSINESS_ADMIN;
+
+  const adminNavItems = [
+    ...(user.role === UserRole.PLATFORM_ADMIN ? [{ id: 'admin-requests', icon: <ShieldCheck size={20} />, label: t('nav.requests', lang) }] : []),
+    { id: 'dashboard', icon: <LayoutDashboard size={20} />, label: t('nav.dashboard', lang) },
+    { id: 'invoices', icon: <FileText size={20} />, label: t('nav.invoices', lang) },
+    { id: 'expenses', icon: <Receipt size={20} />, label: t('nav.expenses', lang) },
+    { id: 'clients', icon: <Users size={20} />, label: t('nav.clients', lang) },
+    { id: 'analytics', icon: <BarChart3 size={20} />, label: t('nav.analytics', lang) },
+    { id: 'audit', icon: <History size={20} />, label: t('nav.audit', lang) },
+    ...(canManagePlatformUsers ? [{ id: 'users', icon: <UserCheck size={20} />, label: 'Users' }] : []),
+    ...((user.role === UserRole.TEAM_MEMBER || user.role === UserRole.ACCOUNTANT || user.role === UserRole.BUSINESS_ADMIN) ? [{ id: 'join-company', icon: <Building2 size={20} />, label: t('nav.joinCompany', lang) }] : []),
+    ...((user.role === UserRole.BUSINESS_OWNER || user.role === UserRole.BUSINESS_ADMIN) && user.companyId ? [{ id: 'employees', icon: <UserPlus size={20} />, label: t('nav.employees', lang) }] : []),
+  ];
+
+  const clientNavItems = [
+    { id: 'dashboard', icon: <LayoutDashboard size={20} />, label: t('nav.myPortal', lang) },
+    { id: 'invoices', icon: <CreditCard size={20} />, label: t('nav.myInvoices', lang) },
+    { id: 'projects', icon: <Briefcase size={20} />, label: t('nav.projects', lang) },
+    { id: 'support', icon: <MessageSquare size={20} />, label: t('nav.support', lang) },
+  ];
+
+  const navItems = isClient ? clientNavItems : adminNavItems;
+
+  return (
+    <div className="min-h-screen flex bg-gray-50 dark:bg-gray-950 text-gray-900 dark:text-gray-100 transition-colors" dir={getLangDir(lang)}>
+      {/* Sidebar */}
+      <aside className={`${isSidebarOpen ? 'w-64' : 'w-[72px]'} bg-white dark:bg-gray-900 border-e border-gray-200 dark:border-gray-800 transition-all duration-300 flex flex-col fixed h-full z-50`}>
+        <div className={`h-16 flex items-center ${isSidebarOpen ? 'px-5' : 'px-0 justify-center'} border-b border-gray-100 dark:border-gray-800`}>
+          {isSidebarOpen ? (
+            <AppBrandLockup />
+          ) : (
+            <AppLogoMark className="h-[54px] w-[54px]" />
+          )}
+        </div>
+
+        <nav className="flex-1 p-3 space-y-0.5 overflow-y-auto overflow-x-hidden">
+          {navItems.map(item => (
+            <NavItem key={item.id} icon={item.icon} label={item.label} active={activeTab === item.id} onClick={() => setActiveTab(item.id)} expanded={isSidebarOpen} />
+          ))}
+        </nav>
+
+        <div className="p-3 border-t border-gray-100 dark:border-gray-800 space-y-0.5">
+          <NavItem icon={<Settings size={20} />} label={t('nav.settings', lang)} active={activeTab === 'settings'} onClick={() => setActiveTab('settings')} expanded={isSidebarOpen} />
+          <button onClick={handleLogout} className={`w-full flex items-center gap-3 px-3 py-2.5 text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-950/30 rounded-xl transition-colors text-sm font-medium ${!isSidebarOpen && 'justify-center'}`}>
+            <LogOut size={18} />
+            {isSidebarOpen && <span>{t('nav.logout', lang)}</span>}
+          </button>
+        </div>
+      </aside>
+
+      {/* Main content */}
+      <main className={`relative flex-1 transition-all duration-300 ${isSidebarOpen ? 'ms-64' : 'ms-[72px]'}`}>
+        <header className="sticky top-0 z-40 bg-white/80 dark:bg-gray-950/80 backdrop-blur-xl border-b border-gray-200 dark:border-gray-800 h-16 flex items-center justify-between px-6">
+          <div className="flex items-center gap-3">
+            <button onClick={() => setIsSidebarOpen(!isSidebarOpen)} className="p-2 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-xl text-gray-500 dark:text-gray-400 transition-colors">
+              {isSidebarOpen ? <X size={18} /> : <Menu size={18} />}
+            </button>
+            {userCompanies.length > 0 && (
+              <div className="hidden md:flex items-center gap-2">
+                <select
+                  value={user.companyId || ''}
+                  onChange={(e) => void handleSwitchCompany(e.target.value)}
+                  disabled={companySwitching}
+                  className="text-xs font-semibold px-3 py-1.5 rounded-lg bg-gray-100 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 text-gray-700 dark:text-gray-200 outline-none disabled:opacity-60"
+                >
+                  {userCompanies.map((company) => (
+                    <option key={company.id} value={company.id}>{company.name}</option>
+                  ))}
+                </select>
+                {user.role === UserRole.BUSINESS_OWNER && (
+                  <button
+                    onClick={() => void handleCreateCompany()}
+                    disabled={companySwitching}
+                    className="px-2.5 py-1.5 rounded-lg bg-primary-600 text-white text-xs font-semibold hover:bg-primary-700 transition-colors disabled:opacity-60"
+                  >
+                    {t('nav.newCompany', lang)}
+                  </button>
+                )}
+              </div>
+            )}
+            {tenant && (
+              <div className="hidden sm:flex items-center gap-2 px-3 py-1.5 bg-gray-100 dark:bg-gray-800 rounded-lg">
+                <Building2 size={14} className="text-gray-400" />
+                <span className="text-xs font-semibold text-gray-600 dark:text-gray-300">{tenant.name}</span>
+              </div>
+            )}
+            {companyActionError && (
+              <span className="hidden lg:inline text-xs text-rose-500">{companyActionError}</span>
+            )}
+          </div>
+          <div className="flex items-center gap-3">
+            <LanguageSwitcher lang={lang} setLang={pickUiLanguage} options={languageOptions} compact isLoading={isTranslatingUi} unavailableMessage={translationUnavailableMessage} />
+            <button
+              type="button"
+              onClick={() => setIsNotificationPanelOpen((v) => !v)}
+              className="relative p-2 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-xl transition-colors text-gray-500 dark:text-gray-400"
+              title={t('notif.title', lang)}
+            >
+              <Bell size={18} />
+              {unreadNotificationsCount > 0 && (
+                <span className="absolute -top-1 -right-1 min-w-[18px] h-[18px] px-1 rounded-full bg-rose-500 text-white text-[10px] font-bold flex items-center justify-center">
+                  {unreadNotificationsCount > 99 ? '99+' : unreadNotificationsCount}
+                </span>
+              )}
+            </button>
+            <button onClick={handleToggleTheme} className="p-2 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-xl transition-colors text-gray-500 dark:text-gray-400">
+              {isDarkMode ? <Sun size={18} /> : <Moon size={18} />}
+            </button>
+            <div className="h-6 w-px bg-gray-200 dark:bg-gray-800"></div>
+            <div className="flex items-center gap-3">
+              <div className="w-8 h-8 rounded-full bg-primary-600 text-white flex items-center justify-center text-xs font-bold shadow-sm">
+                {user.name.split(' ').map(n => n[0]).join('').slice(0, 2).toUpperCase()}
+              </div>
+              <div className="hidden md:block">
+                <p className="text-sm font-semibold leading-none text-gray-900 dark:text-white">{user.name}</p>
+                <p className="text-[11px] text-gray-400 mt-0.5">{user.role}</p>
+              </div>
+            </div>
+          </div>
+        </header>
+
+        {isNotificationPanelOpen && (
+          <div className="absolute right-6 top-20 z-40 w-full max-w-md">
+            <Card className="p-4 shadow-2xl">
+              <div className="flex items-center justify-between mb-3">
+                <h3 className="font-bold text-sm text-gray-900 dark:text-white">{t('notif.title', lang)}</h3>
+                <button
+                  type="button"
+                  onClick={handleMarkAllNotificationsAsRead}
+                  className="text-xs text-primary-600 hover:text-primary-700 font-semibold"
+                >
+                  {t('notif.markAllRead', lang)}
+                </button>
+              </div>
+              {notifications.length === 0 ? (
+                <p className="text-xs text-gray-500 py-6 text-center">{t('notif.empty', lang)}</p>
+              ) : (
+                <div className="space-y-2 max-h-[420px] overflow-auto pr-1">
+                  {notifications.map((n) => (
+                    <button
+                      key={n.id}
+                      onClick={() => handleMarkNotificationAsRead(n.id)}
+                      className={`w-full text-left rounded-xl border p-3 transition-colors ${
+                        n.readAt
+                          ? 'bg-white dark:bg-gray-900 border-gray-200 dark:border-gray-800'
+                          : 'bg-primary-50/70 dark:bg-primary-900/20 border-primary-200 dark:border-primary-800/60'
+                      }`}
+                    >
+                      <div className="flex items-start justify-between gap-2">
+                        <p className="text-xs font-semibold text-gray-900 dark:text-white">{n.title}</p>
+                        {!n.readAt && <span className="w-2 h-2 rounded-full bg-rose-500 mt-1 shrink-0" />}
+                      </div>
+                      <p className="text-xs text-gray-500 mt-1 leading-relaxed">{n.message}</p>
+                      <p className="text-[10px] text-gray-400 mt-2">{new Date(n.createdAt).toLocaleString(localeForLang(lang))}</p>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </Card>
+          </div>
+        )}
+
+        <div className="p-6 lg:p-8 max-w-7xl mx-auto space-y-6">
+          {!isClient ? (
+            <>
+              {activeTab === 'admin-requests' && <AdminRegistrationRequestsView lang={lang} />}
+              {activeTab === 'dashboard' && <AdminDashboardView tenant={tenant} user={user} lang={lang} />}
+              {activeTab === 'invoices' && <AdminInvoicesView user={user} lang={lang} />}
+              {activeTab === 'expenses' && <AdminExpensesView user={user} lang={lang} />}
+              {activeTab === 'clients' && <AdminClientsView user={user} lang={lang} />}
+              {activeTab === 'analytics' && <AdminAnalyticsView lang={lang} />}
+              {activeTab === 'audit' && <AdminAuditLogView lang={lang} />}
+              {activeTab === 'users' && <AdminUsersView user={user} lang={lang} />}
+              {activeTab === 'join-company' && <EmployeeCompanyJoinView lang={lang} />}
+              {activeTab === 'employees' && user.companyId && <AdminEmployeesView companyId={user.companyId} lang={lang} />}
+              {activeTab === 'settings' && (
+                <AdminSettingsView
+                  user={user}
+                  onUserUpdate={setUser}
+                  tenant={tenant}
+                  onUpdate={setTenant}
+                  companyId={user.activeCompanyId || user.companyId}
+                  lang={lang}
+                  setLang={pickUiLanguage}
+                  languageOptions={languageOptions}
+                  themePreference={themePreference}
+                  setThemePreference={setThemePreference}
+                />
+              )}
+            </>
+          ) : (
+            <>
+              {activeTab === 'dashboard' && <ClientDashboardView user={user} lang={lang} />}
+              {activeTab === 'invoices' && <ClientInvoicesView user={user} lang={lang} />}
+              {activeTab === 'projects' && <ClientProjectsView lang={lang} />}
+              {activeTab === 'support' && <ClientSupportView lang={lang} />}
+              {activeTab === 'settings' && (
+                <AdminSettingsView
+                  user={user}
+                  onUserUpdate={setUser}
+                  tenant={null}
+                  onUpdate={() => {}}
+                  lang={lang}
+                  setLang={pickUiLanguage}
+                  languageOptions={languageOptions}
+                  themePreference={themePreference}
+                  setThemePreference={setThemePreference}
+                />
+              )}
+            </>
+          )}
+        </div>
+      </main>
+      <AIAssistantWidget lang={lang} />
+    </div>
+  );
+};
+
+/* ================================================================
+   GEMINI AI INSIGHT
+   ================================================================ */
+
+const SmartInsightCard: React.FC<{ lang: UiLang }> = ({ lang }) => {
+  const [analysis, setAnalysis] = useState<AiAnalyzeExpensesResponse | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    const fetchInsight = async () => {
+      try {
+        const result = await RealAPI.analyzeExpenses({ lookbackMonths: 6 });
+        setAnalysis(result);
+      } catch {
+        setAnalysis({
+          summary: t('ai.insight.unavailable', lang),
+          anomalies: [],
+          alerts: [],
+          recommendations: [],
+          generatedAt: new Date().toISOString(),
+        });
+      }
+      finally { setLoading(false); }
+    };
+    void fetchInsight();
+  }, [lang]);
+
+  return (
+    <div className="bg-gradient-to-br from-primary-600 to-indigo-700 p-6 rounded-2xl text-white shadow-xl shadow-primary-600/15 relative overflow-hidden group">
+      <div className="absolute -end-8 -bottom-8 opacity-[0.08]"><BrainCircuit size={160} /></div>
+      <div className="relative z-10">
+        <div className="flex items-center gap-2.5 mb-3">
+          <div className="p-1.5 bg-white/20 rounded-lg"><Sparkles size={16} /></div>
+          <span className="text-[11px] font-bold uppercase tracking-wider text-primary-200">{t('ai.insight.badge', lang)}</span>
+        </div>
+        <h3 className="text-base font-bold mb-2">{t('ai.insight.title', lang)}</h3>
+        {loading ? (
+          <div className="flex items-center gap-2 text-primary-200 animate-pulse">
+            <Loader2 size={14} className="animate-spin" />
+            <span className="text-xs font-medium">{t('ai.insight.loading', lang)}</span>
+          </div>
+        ) : (
+          <div className="space-y-2">
+            <p className="text-sm leading-relaxed text-primary-100">{analysis?.summary}</p>
+            {analysis?.anomalies.slice(0, 2).map((anomaly, idx) => (
+              <p key={idx} className="text-xs text-amber-200">- {anomaly.title}</p>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
+
+const AIForecastPanel: React.FC<{ lang: UiLang }> = ({ lang }) => {
+  const [forecast, setForecast] = useState<AiForecastResponse | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    const run = async () => {
+      try {
+        setForecast(await RealAPI.forecast({ historyMonths: 12 }));
+      } catch {
+        setForecast(null);
+      } finally {
+        setLoading(false);
+      }
+    };
+    void run();
+  }, []);
+
+  return (
+    <Card className="p-6">
+      <div className="flex items-center justify-between mb-4">
+        <h3 className="font-bold text-gray-900 dark:text-white">{t('ai.forecast.title', lang)}</h3>
+        {loading && <Loader2 size={16} className="animate-spin text-primary-600" />}
+      </div>
+      {forecast ? (
+        <>
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-4">
+            <div className="rounded-xl bg-gray-50 dark:bg-gray-800/60 p-3">
+              <p className="text-[11px] text-gray-500 uppercase tracking-wider">{t('ai.forecast.nextMonth', lang)}</p>
+              <p className="text-lg font-bold text-gray-900 dark:text-white">{forecast.nextMonthExpense.toFixed(2)}</p>
+            </div>
+            <div className="rounded-xl bg-gray-50 dark:bg-gray-800/60 p-3">
+              <p className="text-[11px] text-gray-500 uppercase tracking-wider">{t('ai.forecast.next3m', lang)}</p>
+              <p className="text-lg font-bold text-gray-900 dark:text-white">{forecast.next3MonthsTotal.toFixed(2)}</p>
+            </div>
+            <div className="rounded-xl bg-gray-50 dark:bg-gray-800/60 p-3">
+              <p className="text-[11px] text-gray-500 uppercase tracking-wider">{t('ai.forecast.trend', lang)}</p>
+              <p className="text-lg font-bold text-gray-900 dark:text-white">{forecastTrendLabel(forecast.growthTrend, lang)}</p>
+            </div>
+          </div>
+          <div className="h-[180px]">
+            <ResponsiveContainer width="100%" height="100%">
+              <LineChart data={forecast.timeline}>
+                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#374151" opacity={0.1} />
+                <XAxis dataKey="period" axisLine={false} tickLine={false} />
+                <YAxis axisLine={false} tickLine={false} />
+                <Tooltip />
+                <Line type="monotone" dataKey="predictedExpense" stroke="#2563eb" strokeWidth={3} dot={{ r: 4 }} />
+              </LineChart>
+            </ResponsiveContainer>
+          </div>
+        </>
+      ) : (
+        <p className="text-sm text-gray-500">{t('ai.forecast.unavailable', lang)}</p>
+      )}
+    </Card>
+  );
+};
+
+const AICashFlowCopilotPanel: React.FC<{ lang: UiLang }> = ({ lang }) => {
+  const [data, setData] = useState<AiCashFlowCopilotResponse | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const isFr = lang === 'fr';
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    setError('');
+    try {
+      setData(await RealAPI.cashFlowCopilot({ historyMonths: 12, horizonMonths: 3 }));
+    } catch (e) {
+      setData(null);
+      setError(getErrorMessage(e).message);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  useEffect(() => {
+    const refresh = () => void load();
+    window.addEventListener(FINOPS_DATA_CHANGED_EVENT, refresh);
+    return () => window.removeEventListener(FINOPS_DATA_CHANGED_EVENT, refresh);
+  }, [load]);
+
+  const money = (value: number) =>
+    `${value.toLocaleString(localeForLang(lang), {
+      minimumFractionDigits: 0,
+      maximumFractionDigits: 2,
+    })} €`;
+
+  return (
+    <Card className="p-6">
+      <div className="flex items-center justify-between mb-4">
+        <div>
+          <h3 className="font-bold text-gray-900 dark:text-white">
+            {isFr ? 'Cash-Flow Copilot' : 'Cash-Flow Copilot'}
+          </h3>
+          <p className="text-sm text-gray-500 dark:text-gray-400">
+            {isFr ? 'Projection des encaissements et décaissements sur 3 mois.' : '3-month inflow, outflow, and net cash projection.'}
+          </p>
+        </div>
+        <PrimaryButton type="button" variant="outline" className="px-3 py-2 text-xs" onClick={() => void load()} loading={loading}>
+          <RefreshCw size={14} /> {t('common.refresh', lang)}
+        </PrimaryButton>
+      </div>
+
+      {error && <p className="mb-4 text-sm text-rose-500">{error}</p>}
+
+      {data ? (
+        <div className="space-y-5">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <div className="rounded-xl bg-gray-50 dark:bg-gray-800/60 p-3">
+              <p className="text-[11px] text-gray-500 uppercase tracking-wider">
+                {isFr ? 'Trésorerie estimée au départ' : 'Estimated opening cash'}
+              </p>
+              <p className="text-lg font-bold text-gray-900 dark:text-white">{money(data.openingCashEstimate)}</p>
+            </div>
+            <div className="rounded-xl bg-gray-50 dark:bg-gray-800/60 p-3">
+              <p className="text-[11px] text-gray-500 uppercase tracking-wider">
+                {isFr ? 'Trésorerie projetée' : 'Projected ending cash'}
+              </p>
+              <p className={`text-lg font-bold ${data.projectedEndingCash >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
+                {money(data.projectedEndingCash)}
+              </p>
+            </div>
+            <div className="rounded-xl bg-gray-50 dark:bg-gray-800/60 p-3">
+              <p className="text-[11px] text-gray-500 uppercase tracking-wider">
+                {isFr ? 'Confiance' : 'Confidence'}
+              </p>
+              <p className="text-lg font-bold text-gray-900 dark:text-white">{Math.round(data.confidence * 100)}%</p>
+            </div>
+          </div>
+
+          <div className="rounded-2xl border border-gray-100 dark:border-gray-800 p-4">
+            <div className="flex items-center justify-between gap-3 mb-3">
+              <p className="text-sm font-semibold text-gray-900 dark:text-white">
+                {isFr ? 'Projection mensuelle' : 'Monthly projection'}
+              </p>
+              <Badge
+                variant={
+                  data.netTrend === 'improving'
+                    ? 'success'
+                    : data.netTrend === 'deteriorating'
+                      ? 'danger'
+                      : 'warning'
+                }
+              >
+                {data.netTrend}
+              </Badge>
+            </div>
+            <div className="h-[220px]">
+              <ResponsiveContainer width="100%" height="100%">
+                <LineChart data={data.timeline}>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#374151" opacity={0.1} />
+                  <XAxis dataKey="period" axisLine={false} tickLine={false} />
+                  <YAxis axisLine={false} tickLine={false} />
+                  <Tooltip />
+                  <Line type="monotone" dataKey="projectedInflows" stroke="#2563eb" strokeWidth={3} dot={{ r: 4 }} />
+                  <Line type="monotone" dataKey="projectedOutflows" stroke="#f97316" strokeWidth={3} dot={{ r: 4 }} />
+                  <Line type="monotone" dataKey="endingCash" stroke="#10b981" strokeWidth={3} dot={{ r: 4 }} />
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+
+          <div className="rounded-xl bg-gray-50 dark:bg-gray-800/60 p-4">
+            <p className="text-sm text-gray-700 dark:text-gray-300">{data.summary}</p>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="rounded-2xl border border-gray-100 dark:border-gray-800 p-4">
+              <p className="text-sm font-semibold text-gray-900 dark:text-white mb-3">
+                {isFr ? 'Principaux moteurs' : 'Key drivers'}
+              </p>
+              <div className="space-y-3">
+                {data.drivers.map((driver, index) => (
+                  <div key={index} className="flex items-start justify-between gap-3">
+                    <div>
+                      <p className="text-sm font-medium text-gray-900 dark:text-white">{driver.label}</p>
+                      <p className="text-xs text-gray-500 dark:text-gray-400">
+                        {driver.direction === 'positive'
+                          ? isFr ? 'Impact positif attendu' : 'Expected positive impact'
+                          : isFr ? 'Pression négative attendue' : 'Expected negative pressure'}
+                      </p>
+                    </div>
+                    <span className={`text-sm font-semibold ${driver.direction === 'positive' ? 'text-emerald-600' : 'text-rose-600'}`}>
+                      {money(driver.impact)}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div className="rounded-2xl border border-gray-100 dark:border-gray-800 p-4">
+              <p className="text-sm font-semibold text-gray-900 dark:text-white mb-3">
+                {isFr ? 'Actions recommandées' : 'Recommended actions'}
+              </p>
+              <div className="space-y-3">
+                {data.actions.map((action, index) => (
+                  <div key={index} className="rounded-xl bg-gray-50 dark:bg-gray-800/60 p-3">
+                    <div className="flex items-center justify-between gap-3">
+                      <p className="text-sm font-medium text-gray-900 dark:text-white">{action.title}</p>
+                      <Badge
+                        variant={
+                          action.priority === 'high'
+                            ? 'danger'
+                            : action.priority === 'medium'
+                              ? 'warning'
+                              : 'info'
+                        }
+                      >
+                        {action.priority}
+                      </Badge>
+                    </div>
+                    <p className="mt-2 text-xs text-gray-500 dark:text-gray-400">{action.detail}</p>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : !loading ? (
+        <p className="text-sm text-gray-500">
+          {isFr ? 'Le copilote de trésorerie est indisponible pour le moment.' : 'Cash-flow copilot is unavailable right now.'}
+        </p>
+      ) : null}
+    </Card>
+  );
+};
+
+const AICostOptimizationPanel: React.FC<{ lang: UiLang }> = ({ lang }) => {
+  const [data, setData] = useState<AiOptimizeCostsResponse | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    const run = async () => {
+      try {
+        setData(await RealAPI.optimizeCosts());
+      } catch {
+        setData(null);
+      } finally {
+        setLoading(false);
+      }
+    };
+    void run();
+  }, []);
+
+  return (
+    <Card className="p-6">
+      <div className="flex items-center justify-between mb-4">
+        <h3 className="font-bold text-gray-900 dark:text-white">{t('ai.cost.title', lang)}</h3>
+        {loading && <Loader2 size={16} className="animate-spin text-primary-600" />}
+      </div>
+      {data ? (
+        <div className="space-y-3">
+          <p className="text-sm text-gray-600 dark:text-gray-300">{data.summary}</p>
+          <p className="text-sm font-semibold text-emerald-600">{t('ai.cost.savingsPrefix', lang)} {data.estimatedMonthlySavings.toFixed(2)}</p>
+          {data.recommendations.slice(0, 3).map((item, idx) => (
+            <div key={idx} className="rounded-xl border border-gray-100 dark:border-gray-800 p-3">
+              <p className="text-sm font-semibold text-gray-900 dark:text-white">{item.title}</p>
+              <p className="text-xs text-gray-500 mt-1">{item.description}</p>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <p className="text-sm text-gray-500">{t('ai.cost.unavailable', lang)}</p>
+      )}
+    </Card>
+  );
+};
+
+function renderChatAnswerLine(line: string, key: number): React.ReactNode {
+  const trimmed = line.trimEnd();
+  if (!trimmed) return <div key={key} className="h-2" />;
+  if (trimmed.startsWith('### ')) {
+    return (
+      <p key={key} className="text-sm font-semibold text-gray-900 dark:text-white mt-2 mb-0.5">
+        {trimmed.slice(4)}
+      </p>
+    );
+  }
+  const parts = trimmed.split(/(\*\*[^*]+\*\*)/g);
+  return (
+    <p key={key} className="text-sm text-gray-600 dark:text-gray-300 mb-1 leading-relaxed">
+      {parts.map((p, i) => {
+        if (p.startsWith('**') && p.endsWith('**')) {
+          return (
+            <strong key={i} className="font-semibold text-gray-800 dark:text-gray-100">
+              {p.slice(2, -2)}
+            </strong>
+          );
+        }
+        return <span key={i}>{p}</span>;
+      })}
+    </p>
+  );
+}
+
+const AIAssistantWidget: React.FC<{ lang: UiLang }> = ({ lang }) => {
+  const [open, setOpen] = useState(false);
+  const [message, setMessage] = useState('');
+  const [reply, setReply] = useState('');
+  const [followUps, setFollowUps] = useState<string[]>([]);
+  const [loading, setLoading] = useState(false);
+
+  const ask = async (text?: string) => {
+    const q = (text ?? message).trim();
+    if (!q || loading) return;
+    setMessage(q);
+    setLoading(true);
+    try {
+      const data = await RealAPI.chat({ message: q });
+      setReply(data.answer);
+      setFollowUps(Array.isArray(data.followUps) ? data.followUps : []);
+    } catch {
+      setReply(t('ai.chat.unavailable', lang));
+      setFollowUps([]);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="fixed bottom-5 end-5 z-[70]">
+      {open && (
+        <Card className="w-[360px] max-w-[calc(100vw-2rem)] p-4 mb-3 shadow-2xl max-h-[min(70vh,520px)] flex flex-col">
+          <div className="flex items-center justify-between mb-3 shrink-0">
+            <h3 className="font-bold text-gray-900 dark:text-white text-sm">{t('ai.chat.title', lang)}</h3>
+            <button
+              type="button"
+              onClick={() => setOpen(false)}
+              className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200"
+            >
+              <X size={16} />
+            </button>
+          </div>
+          <div className="flex gap-2 mb-3 shrink-0">
+            <input
+              value={message}
+              onChange={(e) => setMessage(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault();
+                  void ask();
+                }
+              }}
+              placeholder={t('ai.chat.placeholder', lang)}
+              className="flex-1 px-3 py-2 rounded-lg border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 text-sm"
+            />
+            <PrimaryButton onClick={() => void ask()} loading={loading} className="px-3 py-2 text-sm">
+              {t('ai.chat.ask', lang)}
+            </PrimaryButton>
+          </div>
+          <div className="overflow-y-auto min-h-[48px] flex-1 pe-1">
+            {reply ?
+              reply.split('\n').map((line, i) => renderChatAnswerLine(line, i))
+            : <p className="text-sm text-gray-500">{t('ai.chat.ready', lang)}</p>}
+            {followUps.length > 0 && (
+              <div className="mt-3 pt-2 border-t border-gray-100 dark:border-gray-800">
+                <p className="text-[10px] font-semibold uppercase tracking-wider text-gray-400 mb-2">
+                  {t('ai.chat.suggestions', lang)}
+                </p>
+                <div className="flex flex-col gap-1.5">
+                  {followUps.map((s) => (
+                    <button
+                      key={s}
+                      type="button"
+                      disabled={loading}
+                      onClick={() => void ask(s)}
+                      className="text-left text-xs px-2 py-1.5 rounded-lg bg-primary-50 dark:bg-primary-900/20 text-primary-700 dark:text-primary-300 hover:bg-primary-100 dark:hover:bg-primary-900/40 transition-colors"
+                    >
+                      {s}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        </Card>
+      )}
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="w-12 h-12 rounded-full bg-primary-600 text-white shadow-lg hover:bg-primary-700 transition-colors flex items-center justify-center"
+        title={t('ai.chat.openTitle', lang)}
+      >
+        <MessageSquare size={20} />
+      </button>
+    </div>
+  );
+};
+
+const AIMonthlyReportCard: React.FC<{ lang: UiLang }> = ({ lang }) => {
+  const [report, setReport] = useState<AiMonthlyReportResponse | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    const run = async () => {
+      try {
+        setReport(await RealAPI.monthlyReport({}));
+      } catch {
+        setReport(null);
+      } finally {
+        setLoading(false);
+      }
+    };
+    void run();
+  }, []);
+
+  return (
+    <Card className="p-6">
+      <div className="flex items-center justify-between mb-3">
+        <h3 className="font-bold text-gray-900 dark:text-white">{t('ai.report.title', lang)}</h3>
+        {loading && <Loader2 size={16} className="animate-spin text-primary-600" />}
+      </div>
+      {report ? (
+        <div className="space-y-2">
+          <p className="text-sm text-gray-600 dark:text-gray-300">{report.executiveSummary}</p>
+          <p className="text-sm font-semibold text-gray-900 dark:text-white">{t('ai.report.totalExpenses', lang)} {report.totalExpenses.toFixed(2)}</p>
+          <p className="text-xs text-gray-500">{report.costIncreaseAnalysis}</p>
+        </div>
+      ) : (
+        <p className="text-sm text-gray-500">{t('ai.report.unavailable', lang)}</p>
+      )}
+    </Card>
+  );
+};
+
+/* ================================================================
+   BUSINESS REGISTRATION
+   ================================================================ */
+
+const BusinessRegistrationView: React.FC<{ lang: UiLang; setLang: (l: UiLang) => void; languageOptions: LanguageOption[]; translationUnavailableMessage: string | null; onSuccess: () => void; onCancel: () => void }> = ({ lang, setLang, languageOptions, translationUnavailableMessage, onSuccess, onCancel }) => {
+  const [form, setForm] = useState({ companyName: '', companyCategory: 'technology', email: '', ownerName: '', phone: '' });
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+  const [errorSolution, setErrorSolution] = useState<string | undefined>();
+  const [submitted, setSubmitted] = useState(false);
+
+  const validate = (): string | null => {
+    const name = form.companyName.trim();
+    const ownerName = form.ownerName.trim();
+    const email = form.email.trim();
+    if (!name || name.length < 2) return t('reg.val.companyMin', lang);
+    if (name.length > 100) return t('reg.val.companyMax', lang);
+    if (!form.companyCategory) return t('reg.val.category', lang);
+    if (!email) return t('reg.val.emailRequired', lang);
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return t('reg.val.emailInvalid', lang);
+    if (!ownerName || ownerName.length < 2) return t('reg.val.ownerMin', lang);
+    if (!/^[a-zA-ZÀ-ÿ\s\-']+$/.test(ownerName)) return t('reg.val.ownerChars', lang);
+    if (form.phone && !/^[\+]?[0-9\s\-\(\)]{6,20}$/.test(form.phone.trim())) return t('reg.val.phoneInvalid', lang);
+    return null;
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const validationError = validate();
+    if (validationError) { setError(validationError); return; }
+    setError(''); setLoading(true);
+    try {
+      await RealAPI.submitRegistration({ ...form, companyCategory: form.companyCategory as any, phone: form.phone || undefined });
+      setSubmitted(true);
+    } catch (err) {
+      const { message, solution } = getErrorMessage(err);
+      setError(message); setErrorSolution(solution);
+    } finally { setLoading(false); }
+  };
+
+  if (submitted) {
+    return (
+      <div className="min-h-screen bg-gray-50 dark:bg-gray-950 flex items-center justify-center p-6">
+        <Card className="max-w-md w-full p-8 text-center">
+          <div className="w-14 h-14 bg-emerald-100 dark:bg-emerald-900/30 rounded-2xl flex items-center justify-center mx-auto mb-5">
+            <CheckCircle2 size={28} className="text-emerald-500" />
+          </div>
+          <h1 className="text-xl font-bold text-gray-900 dark:text-white mb-2">{t('reg.success', lang)}</h1>
+          <p className="text-sm text-gray-500 mb-6">{t('reg.successDesc', lang)}</p>
+          <PrimaryButton onClick={onSuccess} className="w-full py-3.5 text-sm">{t('reg.goLogin', lang)}</PrimaryButton>
+        </Card>
+      </div>
+    );
+  }
+
+  return (
+    <div className="min-h-screen bg-gray-50 dark:bg-gray-950 flex items-center justify-center p-6">
+      <Card className="max-w-md w-full p-8">
+        <div className="flex items-center justify-between mb-6">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 bg-primary-600 rounded-xl flex items-center justify-center text-white shadow-md shadow-primary-600/25"><Building2 size={20} /></div>
+            <div>
+              <h1 className="text-lg font-bold text-gray-900 dark:text-white">{t('reg.title', lang)}</h1>
+              <p className="text-xs text-gray-500">{t('reg.desc', lang)}</p>
+            </div>
+          </div>
+          <div className="flex items-center gap-1">
+            <LanguageSwitcher lang={lang} setLang={setLang} options={languageOptions} unavailableMessage={translationUnavailableMessage} compact />
+            <button onClick={onCancel} className="p-2 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-xl text-gray-400 transition-colors"><X size={18} /></button>
+          </div>
+        </div>
+
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <InputField label={t('reg.companyName', lang)} value={form.companyName} onChange={v => setForm({ ...form, companyName: v })} placeholder={t('reg.companyPlaceholder', lang)} required icon={<Building2 size={16} />} />
+          <SelectField label={t('reg.category', lang)} value={form.companyCategory} onChange={v => setForm({ ...form, companyCategory: v })} options={companyCategoryOptions(lang)} required />
+          <InputField label={t('reg.email', lang)} type="email" value={form.email} onChange={v => setForm({ ...form, email: v })} placeholder={t('reg.emailPlaceholder', lang)} required icon={<Mail size={16} />} />
+          <InputField label={t('reg.ownerName', lang)} value={form.ownerName} onChange={v => setForm({ ...form, ownerName: v })} placeholder={t('reg.ownerPlaceholder', lang)} required />
+          <InputField label={t('reg.phone', lang)} type="tel" value={form.phone} onChange={v => setForm({ ...form, phone: v })} placeholder={t('reg.phonePlaceholder', lang)} />
+          {error && <ErrorAlert message={error} solution={errorSolution} onDismiss={() => { setError(''); setErrorSolution(undefined); }} />}
+          <PrimaryButton type="submit" loading={loading} className="w-full py-3.5 text-sm">{t('reg.submit', lang)}</PrimaryButton>
+        </form>
+      </Card>
+    </div>
+  );
+};
+
+/* ================================================================
+   CHANGE PASSWORD
+   ================================================================ */
+
+const ChangePasswordModal: React.FC<{
+  lang: UiLang;
+  setLang: (l: UiLang) => void;
+  languageOptions: LanguageOption[];
+  translationUnavailableMessage: string | null;
+  isTranslatingUi: boolean;
+  onSuccess: () => void;
+}> = ({
+  lang,
+  setLang,
+  languageOptions,
+  translationUnavailableMessage,
+  isTranslatingUi,
+  onSuccess,
+}) => {
+  const [current, setCurrent] = useState('');
+  const [newPass, setNewPass] = useState('');
+  const [confirm, setConfirm] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+  const [errorSolution, setErrorSolution] = useState<string | undefined>();
+
+  const passwordStrength = useMemo(() => {
+    if (!newPass) return 0;
+    let s = 0;
+    if (newPass.length >= 8) s++;
+    if (/[a-z]/.test(newPass)) s++;
+    if (/[A-Z]/.test(newPass)) s++;
+    if (/\d/.test(newPass)) s++;
+    return s;
+  }, [newPass]);
+
+  const strengthColor = passwordStrength <= 1 ? 'bg-rose-500' : passwordStrength <= 2 ? 'bg-amber-500' : passwordStrength <= 3 ? 'bg-primary-500' : 'bg-emerald-500';
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault(); setError('');
+    if (newPass !== confirm) { setError(t('changepwd.mismatch', lang)); return; }
+    if (newPass.length < 8) { setError(t('changepwd.minLength', lang)); return; }
+    if (!/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d).+$/.test(newPass)) { setError(t('changepwd.rules', lang)); return; }
+    setLoading(true);
+    try { await RealAPI.changePassword(current, newPass); onSuccess(); }
+    catch (err) { const { message, solution } = getErrorMessage(err); setError(message); setErrorSolution(solution); }
+    finally { setLoading(false); }
+  };
+
+  return (
+    <div className="min-h-screen bg-gray-50 dark:bg-gray-950 flex items-center justify-center p-6">
+      <Card className="max-w-md w-full p-8">
+        <div className="flex justify-end mb-4">
+          <LanguageSwitcher
+            lang={lang}
+            setLang={setLang}
+            options={languageOptions}
+            compact
+            isLoading={isTranslatingUi}
+            unavailableMessage={translationUnavailableMessage}
+          />
+        </div>
+        <div className="flex justify-center mb-5">
+          <div className="w-14 h-14 bg-amber-100 dark:bg-amber-900/30 rounded-2xl flex items-center justify-center"><ShieldCheck size={28} className="text-amber-500" /></div>
+        </div>
+        <h1 className="text-xl font-bold text-gray-900 dark:text-white mb-1 text-center">{t('changepwd.title', lang)}</h1>
+        <p className="text-sm text-gray-500 mb-6 text-center">{t('changepwd.desc', lang)}</p>
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <InputField label={t('changepwd.current', lang)} type="password" value={current} onChange={setCurrent} required />
+          <div>
+            <InputField label={t('changepwd.new', lang)} type="password" value={newPass} onChange={setNewPass} required placeholder={t('changepwd.newPlaceholder', lang)} />
+            {newPass && (
+              <div className="mt-2 flex gap-1">
+                {[1, 2, 3, 4].map(i => (
+                  <div key={i} className={`h-1 flex-1 rounded-full transition-colors ${i <= passwordStrength ? strengthColor : 'bg-gray-200 dark:bg-gray-700'}`} />
+                ))}
+              </div>
+            )}
+          </div>
+          <InputField label={t('changepwd.confirm', lang)} type="password" value={confirm} onChange={setConfirm} required />
+          <div className="bg-gray-50 dark:bg-gray-800/60 rounded-xl p-3 border border-gray-100 dark:border-gray-700">
+            <p className="text-xs text-gray-500 space-y-1">
+              <span className={`flex items-center gap-2 ${newPass.length >= 8 ? 'text-emerald-500' : ''}`}><CircleDot size={10} /> {t('changepwd.rule1', lang)}</span>
+              <span className={`flex items-center gap-2 ${/[A-Z]/.test(newPass) ? 'text-emerald-500' : ''}`}><CircleDot size={10} /> {t('changepwd.rule2', lang)}</span>
+              <span className={`flex items-center gap-2 ${/[a-z]/.test(newPass) ? 'text-emerald-500' : ''}`}><CircleDot size={10} /> {t('changepwd.rule3', lang)}</span>
+              <span className={`flex items-center gap-2 ${/\d/.test(newPass) ? 'text-emerald-500' : ''}`}><CircleDot size={10} /> {t('changepwd.rule4', lang)}</span>
+            </p>
+          </div>
+          {error && <ErrorAlert message={error} solution={errorSolution} onDismiss={() => { setError(''); setErrorSolution(undefined); }} />}
+          <PrimaryButton type="submit" loading={loading} className="w-full py-3.5 text-sm">{t('changepwd.submit', lang)}</PrimaryButton>
+        </form>
+      </Card>
+    </div>
+  );
+};
+
+/* ================================================================
+   LANDING PAGE
+   ================================================================ */
+
+const LandingPageView: React.FC<{ lang: UiLang; setLang: (l: UiLang) => void; languageOptions: LanguageOption[]; translationUnavailableMessage: string | null; isDarkMode: boolean; onToggleTheme: () => void; onEnter: () => void; onGetStarted: () => void }> = ({ lang, setLang, languageOptions, translationUnavailableMessage, isDarkMode, onToggleTheme, onEnter, onGetStarted }) => (
+  <div className="min-h-screen bg-white dark:bg-gray-950 transition-colors overflow-hidden">
+    <nav className="fixed top-0 w-full z-50 bg-white/80 dark:bg-gray-950/80 backdrop-blur-xl border-b border-gray-200 dark:border-gray-800">
+      <div className="max-w-6xl mx-auto px-6 h-16 flex items-center justify-between">
+        <AppBrandLockup />
+        <div className="hidden md:flex items-center gap-8 text-sm font-medium text-gray-500 dark:text-gray-400">
+          <a href="#features" className="hover:text-primary-600 transition-colors">{t('landing.features', lang)}</a>
+          <a href="#stats" className="hover:text-primary-600 transition-colors">{t('landing.performance', lang)}</a>
+          <a href="#about" className="hover:text-primary-600 transition-colors">{t('landing.platform', lang)}</a>
+        </div>
+        <div className="flex items-center gap-3">
+          <LanguageSwitcher lang={lang} setLang={setLang} options={languageOptions} unavailableMessage={translationUnavailableMessage} compact />
+          <button onClick={onToggleTheme} className="p-2 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-xl text-gray-500 dark:text-gray-400 transition-colors">
+            {isDarkMode ? <Sun size={18} /> : <Moon size={18} />}
+          </button>
+          <PrimaryButton onClick={onEnter} variant="outline" className="px-5 py-2 text-sm">{t('landing.connection', lang)}</PrimaryButton>
+          <PrimaryButton onClick={onGetStarted} className="px-5 py-2 text-sm">{t('landing.start', lang)}</PrimaryButton>
+        </div>
+      </div>
+    </nav>
+
+    <section className="pt-36 pb-20 px-6 max-w-5xl mx-auto text-center relative">
+      <div className="absolute top-32 left-1/2 -translate-x-1/2 w-[500px] h-[500px] bg-primary-600/10 blur-[100px] rounded-full -z-10"></div>
+      <Badge variant="info"><Sparkles size={12} /> {t('landing.badge', lang)}</Badge>
+      <h1 className="text-5xl md:text-7xl font-bold tracking-tight mt-6 mb-6 text-gray-900 dark:text-white leading-[1.1]">
+        {t('landing.title1', lang)}<br /><span className="text-primary-600">{t('landing.title2', lang)}</span>
+      </h1>
+      <p className="text-lg text-gray-500 dark:text-gray-400 max-w-2xl mx-auto mb-10">
+        {t('landing.subtitle', lang)}
+      </p>
+      <div className="flex flex-col sm:flex-row items-center justify-center gap-3">
+        <PrimaryButton onClick={onGetStarted} className="px-8 py-4 text-base">{t('landing.join', lang)} <ArrowRight size={18} /></PrimaryButton>
+        <PrimaryButton onClick={onEnter} variant="outline" className="px-8 py-4 text-base">{t('landing.login', lang)}</PrimaryButton>
+      </div>
+    </section>
+
+    <section id="features" className="py-16 px-6 max-w-6xl mx-auto">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+        <FeatureCard icon={<Zap className="text-amber-500" />} title={t('landing.feature1.title', lang)} desc={t('landing.feature1.desc', lang)} />
+        <FeatureCard icon={<Globe className="text-blue-500" />} title={t('landing.feature2.title', lang)} desc={t('landing.feature2.desc', lang)} />
+        <FeatureCard icon={<TrendingUp className="text-emerald-500" />} title={t('landing.feature3.title', lang)} desc={t('landing.feature3.desc', lang)} />
+      </div>
+    </section>
+
+    <section id="stats" className="py-16 bg-primary-600 text-white relative overflow-hidden">
+      <div className="max-w-6xl mx-auto px-6 grid grid-cols-2 md:grid-cols-4 gap-8 text-center relative z-10">
+        {[
+          { val: '$2.4B+', label: t('landing.transactions', lang) },
+          { val: '12k+', label: t('landing.companies', lang) },
+          { val: '99.99%', label: t('landing.uptime', lang) },
+          { val: '24/7', label: t('landing.support', lang) },
+        ].map(s => (
+          <div key={s.label}><p className="text-4xl font-bold mb-1">{s.val}</p><p className="text-primary-200 text-xs font-medium uppercase tracking-wider">{s.label}</p></div>
+        ))}
+      </div>
+    </section>
+
+    <footer className="py-12 border-t border-gray-200 dark:border-gray-800">
+      <div className="max-w-6xl mx-auto px-6 flex flex-col md:flex-row justify-between items-center gap-6">
+        <AppBrandLockup
+          logoClassName="h-[42px] w-[42px]"
+          textClassName="font-bold text-gray-900 dark:text-white"
+          className="gap-2"
+        />
+        <p className="text-xs text-gray-500">{t('landing.footer', lang)}</p>
+      </div>
+    </footer>
+  </div>
+);
+
+const FeatureCard: React.FC<{ icon: React.ReactNode; title: string; desc: string }> = ({ icon, title, desc }) => (
+  <Card hover className="p-8 group">
+    <div className="w-12 h-12 bg-gray-50 dark:bg-gray-800 rounded-xl flex items-center justify-center mb-5 group-hover:bg-primary-600 group-hover:text-white transition-all">
+      {React.cloneElement(icon as React.ReactElement<any>, { size: 24 })}
+    </div>
+    <h3 className="text-lg font-bold mb-2 text-gray-900 dark:text-white">{title}</h3>
+    <p className="text-sm text-gray-500 leading-relaxed">{desc}</p>
+  </Card>
+);
+
+/* ================================================================
+   AUTH VIEW
+   ================================================================ */
+
+const AuthView: React.FC<{ lang: UiLang; setLang: (l: UiLang) => void; languageOptions: LanguageOption[]; translationUnavailableMessage: string | null; mode: 'login' | 'register' | 'register-business'; setMode: (m: any) => void; onLogin: (u: User, mustChangePassword?: boolean) => void; useRealBackend?: boolean; onCancel: () => void; onShowRegisterBusiness?: () => void }> = ({ lang, setLang, languageOptions, translationUnavailableMessage, mode, setMode, onLogin, useRealBackend = false, onCancel, onShowRegisterBusiness }) => {
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [name, setName] = useState('');
+  const [role, setRole] = useState<UserRole>(UserRole.BUSINESS_OWNER);
+  const [isProcessing, setIsProcessing] = useState(false);
+  const [error, setError] = useState('');
+  const [errorSolution, setErrorSolution] = useState<string | undefined>();
+  const [selectedRole, setSelectedRole] = useState<string | null>(null);
+  const [showRolesInfo, setShowRolesInfo] = useState(useRealBackend);
+  const [showForgotPassword, setShowForgotPassword] = useState(false);
+  const [forgotEmail, setForgotEmail] = useState('');
+  const [forgotLoading, setForgotLoading] = useState(false);
+  const [forgotSuccess, setForgotSuccess] = useState(false);
+  const [forgotResult, setForgotResult] = useState<{
+    message: string;
+    emailSent: boolean;
+    previewUrl?: string;
+    provider: 'gmail' | 'smtp' | 'ethereal' | 'console';
+    tempPasswordForDev?: string;
+  } | null>(null);
+  const [forgotError, setForgotError] = useState('');
+  const [forgotErrorSolution, setForgotErrorSolution] = useState<string | undefined>();
+  const [roleAction, setRoleAction] = useState<'login' | 'create'>('login');
+  const [pendingTwoFactor, setPendingTwoFactor] = useState<TwoFactorLoginChallengeBackend | null>(null);
+  const [twoFactorCode, setTwoFactorCode] = useState('');
+  const [twoFactorProcessing, setTwoFactorProcessing] = useState(false);
+  const [employeeRequestForm, setEmployeeRequestForm] = useState({
+    fullName: '',
+    email: '',
+    companyName: '',
+    desiredRole: 'employee',
+  });
+  const [employeeRequestSent, setEmployeeRequestSent] = useState(false);
+  const [employeeRequestLoading, setEmployeeRequestLoading] = useState(false);
+
+  const ROLE_DESCRIPTIONS = [
+    {
+      id: 'admin',
+      icon: <ShieldCheck size={20} />,
+      label: t('role.admin.label', lang),
+      desc: t('role.admin.desc', lang),
+      how: t('role.admin.how', lang),
+      color: 'text-violet-600 bg-violet-50 dark:bg-violet-900/20',
+      defaultEmail: 'admin@finops.com',
+      defaultPass: 'Admin123!',
+    },
+    {
+      id: 'owner',
+      icon: <Crown size={20} />,
+      label: t('role.owner.label', lang),
+      desc: t('role.owner.desc', lang),
+      how: t('role.owner.how', lang),
+      color: 'text-amber-600 bg-amber-50 dark:bg-amber-900/20',
+    },
+    {
+      id: 'employee',
+      icon: <UserCheck size={20} />,
+      label: t('role.employee.label', lang),
+      desc: t('role.employee.desc', lang),
+      how: t('role.employee.how', lang),
+      color: 'text-blue-600 bg-blue-50 dark:bg-blue-900/20',
+    },
+  ];
+
+  const handleSelectRole = (roleId: string) => {
+    setSelectedRole(roleId);
+    setShowRolesInfo(false);
+    setRoleAction('login');
+    setEmployeeRequestSent(false);
+    setEmployeeRequestForm({ fullName: '', email: '', companyName: '', desiredRole: 'employee' });
+    setError(''); setErrorSolution(undefined);
+    const r = ROLE_DESCRIPTIONS.find(rd => rd.id === roleId);
+    if (r?.defaultEmail) { setEmail(r.defaultEmail); setPassword(r.defaultPass || ''); }
+    else { setEmail(''); setPassword(''); }
+  };
+
+  const handleEmployeeRequestSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!employeeRequestForm.fullName.trim() || !employeeRequestForm.email.trim() || !employeeRequestForm.companyName.trim()) {
+      setError('Veuillez remplir tous les champs du formulaire employé.');
+      return;
+    }
+    setEmployeeRequestLoading(true);
+    setError('');
+    setErrorSolution(undefined);
+    try {
+      await RealAPI.submitEmployeeAccessRequest({
+        fullName: employeeRequestForm.fullName.trim(),
+        email: employeeRequestForm.email.trim(),
+        companyName: employeeRequestForm.companyName.trim(),
+        desiredRole: employeeRequestForm.desiredRole as 'manager' | 'employee' | 'accountant',
+      });
+      setEmployeeRequestSent(true);
+      setEmployeeRequestForm({ fullName: '', email: '', companyName: '', desiredRole: 'employee' });
+    } catch (err) {
+      const { message, solution } = getErrorMessage(err);
+      setError(message);
+      setErrorSolution(solution);
+    } finally {
+      setEmployeeRequestLoading(false);
+    }
+  };
+
+  const handleForgotPassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!forgotEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(forgotEmail.trim())) {
+      setForgotError(t('auth.fillAll', lang)); return;
+    }
+    setForgotLoading(true); setForgotError(''); setForgotErrorSolution(undefined);
+    try {
+      const result = await RealAPI.forgotPassword(forgotEmail.trim());
+      setForgotResult(result);
+      setForgotSuccess(true);
+    } catch (err) {
+      const { message, solution } = getErrorMessage(err);
+      setForgotError(message); setForgotErrorSolution(solution);
+    } finally { setForgotLoading(false); }
+  };
+
+  const handleTwoFactorVerification = async (
+    challenge = pendingTwoFactor,
+  ) => {
+    if (!challenge) return;
+    if (normalizeVerificationCode(twoFactorCode).length !== 6) {
+      setError('Enter the 6-digit code from your authenticator app.');
+      setErrorSolution(undefined);
+      return;
+    }
+    setTwoFactorProcessing(true);
+    setError('');
+    setErrorSolution(undefined);
+    try {
+      const result = await RealAPI.verifyTwoFactorLogin(
+        challenge.userId,
+        normalizeVerificationCode(twoFactorCode),
+      );
+      setPendingTwoFactor(null);
+      setTwoFactorCode('');
+      onLogin(
+        mapBackendUserToFrontendUser(result.user),
+        result.mustChangePassword,
+      );
+    } catch (err) {
+      const { message, solution } = getErrorMessage(err);
+      setError(message);
+      setErrorSolution(solution);
+    } finally {
+      setTwoFactorProcessing(false);
+    }
+  };
+
+  const handleSubmit = async () => {
+    if (!email || !password) { setError(t('auth.fillAll', lang)); return; }
+    setIsProcessing(true); setError(''); setErrorSolution(undefined);
+    if (mode === 'login') {
+      try {
+        const data = await RealAPI.login(email, password);
+        if (data.requiresTwoFactor) {
+          setPendingTwoFactor(data.twoFactor);
+          setPassword('');
+          setTwoFactorCode('');
+        } else {
+          onLogin(
+            mapBackendUserToFrontendUser(data.user),
+            data.mustChangePassword,
+          );
+        }
+      } catch (err) { const { message, solution } = getErrorMessage(err); setError(message); setErrorSolution(solution); }
+    } else {
+      setError(t('auth.registerViaBusiness', lang));
+    }
+    setIsProcessing(false);
+  };
+
+  // ---- Forgot Password View ----
+  if (showForgotPassword) {
+    if (forgotSuccess) {
+      return (
+        <div className="min-h-screen bg-gray-50 dark:bg-gray-950 flex items-center justify-center p-6">
+          <Card className="max-w-md w-full p-8 text-center">
+            <div className="w-14 h-14 bg-emerald-100 dark:bg-emerald-900/30 rounded-2xl flex items-center justify-center mx-auto mb-5">
+              <Mail size={28} className="text-emerald-500" />
+            </div>
+            <h1 className="text-xl font-bold text-gray-900 dark:text-white mb-2">
+              {forgotResult?.emailSent ? t('forgot.success', lang) : 'Réinitialisation effectuée'}
+            </h1>
+            <p className="text-sm text-gray-500 mb-4">
+              {forgotResult?.message || t('forgot.checkEmail', lang)}
+            </p>
+            {!forgotResult?.emailSent && forgotResult?.previewUrl && (
+              <a
+                href={forgotResult.previewUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-sm font-semibold text-primary-600 hover:text-primary-700 hover:underline inline-flex items-center gap-1 mb-4"
+              >
+                <ExternalLink size={14} /> Voir l'email de prévisualisation
+              </a>
+            )}
+            {!forgotResult?.emailSent && forgotResult?.tempPasswordForDev && (
+              <p className="text-xs bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-lg p-3 mb-4 text-amber-700 dark:text-amber-300">
+                Mot de passe temporaire (dev): <strong>{forgotResult.tempPasswordForDev}</strong>
+              </p>
+            )}
+            <PrimaryButton
+              onClick={() => {
+                setShowForgotPassword(false);
+                setForgotSuccess(false);
+                setForgotResult(null);
+                setForgotEmail('');
+              }}
+              className="w-full py-3.5 text-sm"
+            >
+              {t('forgot.goLogin', lang)}
+            </PrimaryButton>
+          </Card>
+        </div>
+      );
+    }
+    return (
+      <div className="min-h-screen bg-gray-50 dark:bg-gray-950 flex items-center justify-center p-6">
+        <Card className="max-w-md w-full p-8">
+          <div className="flex items-center justify-between mb-6">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 bg-amber-100 dark:bg-amber-900/30 rounded-xl flex items-center justify-center"><KeyRound size={20} className="text-amber-600" /></div>
+              <div>
+                <h1 className="text-lg font-bold text-gray-900 dark:text-white">{t('forgot.title', lang)}</h1>
+              </div>
+            </div>
+            <div className="flex items-center gap-1">
+              <LanguageSwitcher lang={lang} setLang={setLang} options={languageOptions} unavailableMessage={translationUnavailableMessage} compact />
+              <button onClick={() => { setShowForgotPassword(false); setForgotError(''); setForgotEmail(''); setForgotResult(null); }} className="p-2 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-xl text-gray-400 transition-colors"><X size={18} /></button>
+            </div>
+          </div>
+          <p className="text-sm text-gray-500 mb-6">{t('forgot.desc', lang)}</p>
+          <form onSubmit={handleForgotPassword} className="space-y-4">
+            <InputField label={t('auth.email', lang)} type="email" value={forgotEmail} onChange={setForgotEmail} placeholder={t('forgot.emailPlaceholder', lang)} required icon={<Mail size={16} />} />
+            {forgotError && <ErrorAlert message={forgotError} solution={forgotErrorSolution} onDismiss={() => { setForgotError(''); setForgotErrorSolution(undefined); }} />}
+            <PrimaryButton type="submit" loading={forgotLoading} className="w-full py-3.5 text-sm">
+              <Mail size={16} /> {t('forgot.send', lang)}
+            </PrimaryButton>
+            <div className="text-center">
+              <button type="button" onClick={() => { setShowForgotPassword(false); setForgotError(''); setForgotEmail(''); setForgotResult(null); }} className="text-xs font-medium text-gray-400 hover:text-primary-600 transition-colors">
+                ← {t('forgot.back', lang)}
+              </button>
+            </div>
+          </form>
+        </Card>
+      </div>
+    );
+  }
+
+  if (pendingTwoFactor) {
+    return (
+      <div className="min-h-screen bg-gray-50 dark:bg-gray-950 flex items-center justify-center p-6">
+        <Card className="max-w-md w-full p-8">
+          <div className="flex items-center justify-between mb-6">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 bg-primary-100 dark:bg-primary-900/30 rounded-xl flex items-center justify-center">
+                <ShieldCheck size={20} className="text-primary-600" />
+              </div>
+              <div>
+                <h1 className="text-lg font-bold text-gray-900 dark:text-white">Authenticator code required</h1>
+                <p className="text-xs text-gray-500">{pendingTwoFactor.email}</p>
+              </div>
+            </div>
+            <button
+              onClick={() => {
+                setPendingTwoFactor(null);
+                setTwoFactorCode('');
+                setError('');
+                setErrorSolution(undefined);
+              }}
+              className="p-2 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-xl text-gray-400 transition-colors"
+            >
+              <X size={18} />
+            </button>
+          </div>
+
+          <div className="rounded-2xl bg-gray-50 dark:bg-gray-800/60 border border-gray-100 dark:border-gray-800 p-4 space-y-2">
+            <p className="font-semibold text-sm text-gray-900 dark:text-white">
+              Finish signing in with your authenticator app
+            </p>
+            <p className="text-sm text-gray-500">
+              Open Google Authenticator, Microsoft Authenticator, Authy, or another TOTP app and enter the current 6-digit code for this account.
+            </p>
+          </div>
+
+          <div className="mt-4">
+            <InputField
+              label="Verification code"
+              type="text"
+              value={twoFactorCode}
+              onChange={(value) => setTwoFactorCode(normalizeVerificationCode(value))}
+              placeholder="123456"
+              icon={<Hash size={16} />}
+            />
+            <p className="mt-2 text-xs text-gray-500">
+              This sign-in check expires {formatDateTime(pendingTwoFactor.expiresAt, lang)}.
+            </p>
+          </div>
+
+          {error && (
+            <div className="mt-4">
+              <ErrorAlert
+                message={error}
+                solution={errorSolution}
+                onDismiss={() => {
+                  setError('');
+                  setErrorSolution(undefined);
+                }}
+              />
+            </div>
+          )}
+
+          <div className="mt-6 space-y-3">
+            <PrimaryButton
+              onClick={() => void handleTwoFactorVerification()}
+              loading={twoFactorProcessing}
+              className="w-full py-3.5 text-sm"
+            >
+              <ShieldCheck size={16} /> Verify code
+            </PrimaryButton>
+            <PrimaryButton
+              onClick={() => {
+                setPendingTwoFactor(null);
+                setTwoFactorCode('');
+                setError('');
+                setErrorSolution(undefined);
+              }}
+              variant="outline"
+              className="w-full py-3.5 text-sm"
+            >
+              Back to sign in
+            </PrimaryButton>
+          </div>
+        </Card>
+      </div>
+    );
+  }
+
+  return (
+    <div className="min-h-screen bg-gray-50 dark:bg-gray-950 flex items-center justify-center p-6">
+      <Card className="w-full max-w-lg overflow-hidden">
+        <div className="p-8">
+          {/* Header */}
+          <div className="flex justify-between items-start mb-6">
+            <AppBrandLockup logoClassName="h-[60px] w-[60px]" />
+            <div className="flex items-center gap-1">
+              <LanguageSwitcher lang={lang} setLang={setLang} options={languageOptions} unavailableMessage={translationUnavailableMessage} compact />
+              <button onClick={onCancel} className="p-2 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-xl text-gray-400 transition-colors"><X size={18} /></button>
+            </div>
+          </div>
+
+          <h1 className="text-2xl font-bold text-gray-900 dark:text-white mb-1">{t('auth.login', lang)}</h1>
+          <p className="text-sm text-gray-500 mb-6">{t('auth.selectRole', lang)}</p>
+
+          {/* Role selection cards */}
+          {useRealBackend && showRolesInfo && (
+            <div className="space-y-2 mb-6">
+              <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">{t('auth.yourRole', lang)}</p>
+              {ROLE_DESCRIPTIONS.map(rd => (
+                <button key={rd.id} onClick={() => handleSelectRole(rd.id)}
+                  className="w-full text-left p-4 rounded-xl border border-gray-200 dark:border-gray-700 hover:border-primary-500 dark:hover:border-primary-500 transition-all group">
+                  <div className="flex items-start gap-3">
+                    <div className={`p-2 rounded-lg shrink-0 ${rd.color}`}>{rd.icon}</div>
+                    <div className="flex-1 min-w-0">
+                      <p className="font-semibold text-sm text-gray-900 dark:text-white group-hover:text-primary-600 transition-colors">{rd.label}</p>
+                      <p className="text-xs text-gray-500 mt-0.5">{rd.desc}</p>
+                      <p className="text-[11px] text-gray-400 mt-1 flex items-center gap-1"><KeyRound size={10} /> {rd.how}</p>
+                    </div>
+                    <ChevronRight size={16} className="text-gray-300 group-hover:text-primary-500 mt-1 shrink-0 transition-colors" />
+                  </div>
+                </button>
+              ))}
+            </div>
+          )}
+
+          {/* Selected role indicator */}
+          {useRealBackend && selectedRole && !showRolesInfo && (
+            <div className="mb-5">
+              {(() => {
+                const rd = ROLE_DESCRIPTIONS.find(r => r.id === selectedRole);
+                if (!rd) return null;
+                return (
+                  <div className="flex items-center p-3 rounded-xl bg-gray-50 dark:bg-gray-800/50 border border-gray-200 dark:border-gray-700">
+                    <div className="flex items-center gap-2.5">
+                      <div className={`p-1.5 rounded-lg ${rd.color}`}>{rd.icon}</div>
+                      <span className="text-sm font-semibold text-gray-900 dark:text-white">{rd.label}</span>
+                    </div>
+                  </div>
+                );
+              })()}
+            </div>
+          )}
+
+          {/* Login form - show when role selected or not using real backend */}
+          {(!useRealBackend || !showRolesInfo) && (
+            <div className="space-y-4">
+              {useRealBackend && selectedRole && (
+                <div className="flex gap-1 bg-gray-100 dark:bg-gray-800 rounded-xl p-1">
+                  <button
+                    type="button"
+                    onClick={() => setRoleAction('login')}
+                    className={`flex-1 px-3 py-2 rounded-lg text-xs font-semibold transition-colors ${roleAction === 'login' ? 'bg-white dark:bg-gray-700 text-gray-900 dark:text-white shadow-sm' : 'text-gray-500'}`}
+                  >
+                    Se connecter
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setRoleAction('create')}
+                    className={`flex-1 px-3 py-2 rounded-lg text-xs font-semibold transition-colors ${roleAction === 'create' ? 'bg-white dark:bg-gray-700 text-gray-900 dark:text-white shadow-sm' : 'text-gray-500'}`}
+                  >
+                    {t('auth.tabCreate', lang)}
+                  </button>
+                </div>
+              )}
+
+              {useRealBackend && selectedRole === 'owner' && roleAction === 'create' && (
+                <Card className="p-4 bg-amber-50/70 dark:bg-amber-950/20 border-amber-200 dark:border-amber-900/50">
+                  <p className="text-sm text-amber-800 dark:text-amber-300 mb-3">
+                    {t('auth.ownerHint', lang)}
+                  </p>
+                  <PrimaryButton
+                    onClick={onShowRegisterBusiness}
+                    className="w-full py-2.5 text-sm"
+                  >
+                    {t('auth.openOwnerForm', lang)}
+                  </PrimaryButton>
+                </Card>
+              )}
+
+              {useRealBackend && selectedRole === 'employee' && roleAction === 'create' && (
+                <Card className="p-4 border-blue-200 dark:border-blue-900/50 bg-blue-50/50 dark:bg-blue-950/20">
+                  <h3 className="font-semibold text-sm text-blue-800 dark:text-blue-300 mb-3">{t('auth.employeeRequestTitle', lang)}</h3>
+                  <form onSubmit={handleEmployeeRequestSubmit} className="space-y-3">
+                    <InputField label={t('auth.employeeFullName', lang)} value={employeeRequestForm.fullName} onChange={(v) => setEmployeeRequestForm({ ...employeeRequestForm, fullName: v })} placeholder="Ex: Ali Ben Salah" required />
+                    <InputField label={t('auth.proEmail', lang)} type="email" value={employeeRequestForm.email} onChange={(v) => setEmployeeRequestForm({ ...employeeRequestForm, email: v })} placeholder="nom@entreprise.com" required />
+                    <InputField label={t('auth.companyField', lang)} value={employeeRequestForm.companyName} onChange={(v) => setEmployeeRequestForm({ ...employeeRequestForm, companyName: v })} placeholder={t('auth.companyNamePh', lang)} required />
+                    <SelectField label={t('page.joinCompany.desiredRole', lang)} value={employeeRequestForm.desiredRole} onChange={(v) => setEmployeeRequestForm({ ...employeeRequestForm, desiredRole: v })} options={roleJobSelectOptions(lang)} required />
+                    <PrimaryButton type="submit" loading={employeeRequestLoading} className="w-full py-2.5 text-sm">{t('auth.sendRequest', lang)}</PrimaryButton>
+                  </form>
+                  {employeeRequestSent && (
+                    <p className="text-xs text-emerald-600 mt-2">{t('auth.requestSentSuccess', lang)}</p>
+                  )}
+                </Card>
+              )}
+
+              {useRealBackend && selectedRole === 'admin' && roleAction === 'create' && (
+                <Card className="p-4 border-violet-200 dark:border-violet-900/50 bg-violet-50/50 dark:bg-violet-950/20">
+                  <p className="text-sm text-violet-800 dark:text-violet-300">
+                    {t('auth.adminOnlyLogin', lang)}
+                  </p>
+                </Card>
+              )}
+
+              {(!useRealBackend || !selectedRole || roleAction === 'login') && (
+                <>
+              {mode === 'register' && !useRealBackend && (
+                <InputField label={t('auth.fullName', lang)} value={name} onChange={setName} placeholder="Jean Dupont" required />
+              )}
+              <InputField label={t('auth.email', lang)} type="email" value={email} onChange={setEmail} placeholder="nom@entreprise.com" required icon={<Mail size={16} />} />
+              {(mode === 'login' || useRealBackend) && (
+                <div>
+                  <InputField label={t('auth.password', lang)} type="password" value={password} onChange={setPassword} placeholder="••••••••" required />
+                  {useRealBackend && (
+                    <div className="mt-1.5 text-right">
+                      <button type="button" onClick={() => setShowForgotPassword(true)} className="text-xs font-medium text-primary-600 hover:text-primary-700 hover:underline transition-colors">
+                        {t('auth.forgotPassword', lang)}
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
+              {mode === 'register' && !useRealBackend && (
+                <SelectField label={t('auth.role', lang)} value={role} onChange={v => setRole(v as UserRole)} options={[
+                  { value: UserRole.BUSINESS_OWNER, label: t('role.owner.label', lang) },
+                  { value: UserRole.CLIENT, label: t('auth.roleClient', lang) },
+                  { value: UserRole.ACCOUNTANT, label: t('erole.accountant', lang) },
+                ]} />
+              )}
+
+              {error && <ErrorAlert message={error} solution={errorSolution} onDismiss={() => { setError(''); setErrorSolution(undefined); }} />}
+
+              <PrimaryButton onClick={handleSubmit} loading={isProcessing} className="w-full py-3.5 text-sm">
+                {t('auth.submit', lang)}
+              </PrimaryButton>
+              <div className="text-center pt-2">
+                {useRealBackend ? (
+                  <button onClick={onShowRegisterBusiness} className="text-xs font-medium text-gray-400 hover:text-primary-600 transition-colors">
+                    {t('auth.noAccount', lang)} <span className="text-primary-600 font-semibold">{t('auth.registerBusiness', lang)}</span>
+                  </button>
+                ) : (
+                  <button onClick={() => setMode(mode === 'login' ? 'register' : 'login')} className="text-xs font-medium text-gray-400 hover:text-primary-600 transition-colors">
+                    {mode === 'login' ? t('auth.noAccountCreate', lang) : t('auth.alreadyMember', lang)}
+                  </button>
+                )}
+              </div>
+                </>
+              )}
+            </div>
+          )}
+
+          {/* Info box for non-admin roles */}
+          {useRealBackend && selectedRole && selectedRole !== 'admin' && !showRolesInfo && (
+            <div className="mt-4 p-3 rounded-xl bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800/50">
+              <div className="flex items-start gap-2.5">
+                <Info size={14} className="text-blue-500 shrink-0 mt-0.5" />
+                <p className="text-xs text-blue-700 dark:text-blue-300 leading-relaxed">
+                  {selectedRole === 'owner'
+                    ? t('role.info.owner', lang)
+                    : t('role.info.employee', lang)
+                  }
+                </p>
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Mock mode quick access */}
+        {!useRealBackend && (
+          <div className="px-8 py-4 bg-gray-50 dark:bg-gray-800/40 border-t border-gray-100 dark:border-gray-800">
+            <p className="text-[11px] text-gray-400 mb-2 font-medium">{t('auth.quickAccess', lang)}</p>
+            <div className="flex gap-2">
+              <button onClick={() => { setEmail('admin@devsphere.com'); setPassword('password'); }} className="text-xs px-3 py-1.5 rounded-lg bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-300 hover:border-primary-500 transition-colors font-medium">Admin</button>
+              <button onClick={() => { setEmail('jane@acme.com'); setPassword('password'); }} className="text-xs px-3 py-1.5 rounded-lg bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-300 hover:border-primary-500 transition-colors font-medium">Client</button>
+            </div>
+          </div>
+        )}
+      </Card>
+    </div>
+  );
+};
+
+/* ================================================================
+   CORE NAV & STAT COMPONENTS
+   ================================================================ */
+
+const NavItem: React.FC<{ icon: React.ReactNode; label: string; active: boolean; onClick: () => void; expanded: boolean }> = ({ icon, label, active, onClick, expanded }) => (
+  <button onClick={onClick} className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all text-sm ${
+    active ? 'bg-primary-600 text-white shadow-md shadow-primary-600/25' : 'text-gray-500 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-800 hover:text-gray-900 dark:hover:text-white'
+  } ${!expanded && 'justify-center'}`}>
+    <div className="shrink-0">{icon}</div>
+    {expanded && <span className="font-medium whitespace-nowrap truncate">{label}</span>}
+  </button>
+);
+
+const StatCard: React.FC<{
+  title: string;
+  value: string;
+  change?: string;
+  isPositive?: boolean;
+  icon: React.ReactNode;
+}> = ({ title, value, change, isPositive = true, icon }) => (
+  <Card className="p-6">
+    <div className="flex items-center justify-between mb-4">
+      <div className="p-2.5 bg-gray-50 dark:bg-gray-800 rounded-xl text-primary-600">{icon}</div>
+      {change !== undefined && change !== '' && (
+        <Badge variant={isPositive ? 'success' : 'danger'}>{change}</Badge>
+      )}
+    </div>
+    <p className="text-xs font-medium text-gray-500 uppercase tracking-wider mb-1">{title}</p>
+    <p className="text-2xl font-bold text-gray-900 dark:text-white">{value}</p>
+  </Card>
+);
+
+/* ================================================================
+   ADMIN - REGISTRATION REQUESTS
+   ================================================================ */
+
+const AdminRegistrationRequestsView: React.FC<{ lang: UiLang }> = ({ lang }) => {
+  const [requests, setRequests] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [rejectReason, setRejectReason] = useState<Record<string, string>>({});
+  const [processing, setProcessing] = useState<string | null>(null);
+  const [error, setError] = useState('');
+  const [errorSolution, setErrorSolution] = useState<string | undefined>();
+  const [tab, setTab] = useState<'pending' | 'all'>('pending');
+  const [acceptedCredentials, setAcceptedCredentials] = useState<{
+    email: string;
+    tempPassword: string;
+    role: string;
+    companyName: string;
+    emailSent: boolean;
+    previewUrl?: string;
+    mailConfigured?: boolean;
+  } | null>(null);
+  const [rejectedInfo, setRejectedInfo] = useState<{
+    email: string;
+    name: string;
+    reason: string;
+    emailSent: boolean;
+    previewUrl?: string;
+    mailConfigured?: boolean;
+  } | null>(null);
+  const [copied, setCopied] = useState(false);
+
+  const loadRequests = () => {
+    setLoading(true); setError('');
+    RealAPI.getRegistrationRequests()
+      .then(setRequests)
+      .catch(err => { const { message, solution } = getErrorMessage(err); setError(message); setErrorSolution(solution); setRequests([]); })
+      .finally(() => setLoading(false));
+  };
+  useEffect(() => { loadRequests(); }, []);
+
+  const pending = requests.filter(r => r.status === 'pending');
+  const displayed = tab === 'pending' ? pending : requests;
+
+  const handleAccept = async (id: string) => {
+    setProcessing(id); setError(''); setAcceptedCredentials(null); setRejectedInfo(null);
+    try {
+      const result = await RealAPI.acceptRegistrationRequest(id);
+      setRequests(prev => prev.map(r => r.id === id ? { ...r, status: 'accepted' } : r));
+      setAcceptedCredentials({
+        ...result.credentials,
+        emailSent: result.emailSent,
+        previewUrl: result.previewUrl,
+        mailConfigured: result.mailConfigured,
+      });
+    }
+    catch (e) { const { message, solution } = getErrorMessage(e); setError(message); setErrorSolution(solution); }
+    finally { setProcessing(null); }
+  };
+
+  const handleReject = async (id: string) => {
+    const reason = rejectReason[id];
+    if (!reason || reason.length < 10) { setError(t('admin.requests.rejectMinLength', lang)); return; }
+    setProcessing(id); setError(''); setAcceptedCredentials(null); setRejectedInfo(null);
+    try {
+      const result = await RealAPI.rejectRegistrationRequest(id, reason);
+      setRequests(prev => prev.map(r => r.id === id ? { ...r, status: 'rejected' } : r));
+      setRejectReason(prev => ({ ...prev, [id]: '' }));
+      setRejectedInfo({
+        ...result.rejectedUser,
+        emailSent: result.emailSent,
+        previewUrl: result.previewUrl,
+        mailConfigured: result.mailConfigured,
+      });
+    }
+    catch (e) { const { message, solution } = getErrorMessage(e); setError(message); setErrorSolution(solution); }
+    finally { setProcessing(null); }
+  };
+
+  const handleDeleteRequest = async (id: string) => {
+    const confirmed = window.confirm(t('admin.requests.deleteConfirm', lang));
+    if (!confirmed) return;
+
+    setProcessing(id); setError(''); setAcceptedCredentials(null); setRejectedInfo(null);
+    try {
+      const result = await RealAPI.deleteRegistrationRequest(id);
+      setRequests(prev => prev.filter(r => r.id !== id));
+      if (result.deletedCompany) {
+        setError(t('admin.requests.deleteSuccess', lang).replace('{n}', String(result.deletedUsersCount)));
+        setErrorSolution(undefined);
+      }
+    }
+    catch (e) { const { message, solution } = getErrorMessage(e); setError(message); setErrorSolution(solution); }
+    finally { setProcessing(null); }
+  };
+
+  const handleCopyCredentials = () => {
+    if (!acceptedCredentials) return;
+    const text = `${acceptedCredentials.email}\n${acceptedCredentials.tempPassword}`;
+    navigator.clipboard.writeText(text).then(() => { setCopied(true); setTimeout(() => setCopied(false), 2000); });
+  };
+
+  const statusBadge = (status: string) => {
+    if (status === 'accepted') return <Badge variant="success"><CheckCircle2 size={12} /> {t('admin.requests.accepted', lang)}</Badge>;
+    if (status === 'rejected') return <Badge variant="danger"><X size={12} /> {t('admin.requests.rejected', lang)}</Badge>;
+    return <Badge variant="warning"><Clock size={12} /> {t('admin.requests.pending', lang)}</Badge>;
+  };
+
+  return (
+    <div className="space-y-6">
+      <PageHeader title={t('admin.requests.title', lang)} description={t('admin.requests.desc', lang)}
+        actions={
+          <PrimaryButton onClick={loadRequests} variant="outline" className="px-4 py-2 text-sm">
+            <RefreshCw size={14} className={loading ? 'animate-spin' : ''} /> {t('common.refresh', lang)}
+          </PrimaryButton>
+        }
+      />
+
+      <div className="flex gap-1 bg-gray-100 dark:bg-gray-800 rounded-xl p-1 w-fit">
+        <button type="button" onClick={() => setTab('pending')} className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${tab === 'pending' ? 'bg-white dark:bg-gray-700 shadow-sm text-gray-900 dark:text-white' : 'text-gray-500'}`}>
+          {t('admin.requests.pending', lang)} {pending.length > 0 && <span className="ml-1.5 px-1.5 py-0.5 bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400 rounded text-xs font-bold">{pending.length}</span>}
+        </button>
+        <button type="button" onClick={() => setTab('all')} className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${tab === 'all' ? 'bg-white dark:bg-gray-700 shadow-sm text-gray-900 dark:text-white' : 'text-gray-500'}`}>
+          {t('admin.requests.all', lang)} ({requests.length})
+        </button>
+      </div>
+
+      {error && <ErrorAlert message={error} solution={errorSolution} onDismiss={() => { setError(''); setErrorSolution(undefined); }} />}
+
+      {/* Accepted credentials banner */}
+      {acceptedCredentials && (
+        <Card className="p-5 border-emerald-200 dark:border-emerald-800/60 bg-emerald-50/50 dark:bg-emerald-950/20">
+          <div className="flex items-start gap-3 mb-4">
+            <div className="p-2 bg-emerald-100 dark:bg-emerald-900/40 rounded-lg"><CheckCircle2 className="w-5 h-5 text-emerald-600" /></div>
+            <div>
+              <h3 className="font-bold text-emerald-800 dark:text-emerald-200">{t('admin.requests.acceptedTitle', lang)} — {acceptedCredentials.companyName}</h3>
+              <p className="text-sm text-emerald-700 dark:text-emerald-300 mt-0.5">
+                {acceptedCredentials.emailSent
+                  ? t('admin.requests.emailSent', lang)
+                  : mailNotDeliveredHint(lang, acceptedCredentials.mailConfigured)
+                }
+              </p>
+            </div>
+          </div>
+          <div className="bg-white dark:bg-gray-900 rounded-xl p-4 border border-emerald-200 dark:border-emerald-800/40">
+            <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3 flex items-center gap-2"><KeyRound size={12} /> {t('admin.requests.credentials', lang)}</p>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div>
+                <p className="text-[11px] text-gray-400 uppercase tracking-wider">{t('common.email', lang)}</p>
+                <p className="font-mono font-semibold text-sm text-gray-900 dark:text-white">{acceptedCredentials.email}</p>
+              </div>
+              <div>
+                <p className="text-[11px] text-gray-400 uppercase tracking-wider">{t('admin.requests.tempPassword', lang)}</p>
+                <p className="font-mono font-semibold text-sm text-primary-600">{acceptedCredentials.tempPassword}</p>
+              </div>
+              <div>
+                <p className="text-[11px] text-gray-400 uppercase tracking-wider">{t('admin.requests.assignedRole', lang)}</p>
+                <p className="font-semibold text-sm text-gray-900 dark:text-white">{acceptedCredentials.role}</p>
+              </div>
+            </div>
+            <div className="mt-3 flex gap-2">
+              <PrimaryButton onClick={handleCopyCredentials} variant="outline" className="px-4 py-2 text-xs">
+                {copied ? <><CheckCircle2 size={12} /> {t('admin.requests.copied', lang)}</> : <><Copy size={12} /> {t('admin.requests.copy', lang)}</>}
+              </PrimaryButton>
+              <PrimaryButton onClick={() => setAcceptedCredentials(null)} variant="outline" className="px-4 py-2 text-xs">{t('admin.requests.close', lang)}</PrimaryButton>
+            </div>
+          </div>
+          {acceptedCredentials.previewUrl && (
+            <a href={acceptedCredentials.previewUrl} target="_blank" rel="noopener noreferrer"
+              className="mt-3 flex items-center gap-2 text-sm text-primary-600 hover:text-primary-700 font-semibold hover:underline">
+              <Mail size={14} /> 👁️ {t('admin.requests.viewEmail', lang)}
+            </a>
+          )}
+          <p className="text-xs text-emerald-600 dark:text-emerald-400 mt-2 flex items-center gap-1"><Info size={12} /> {t('admin.requests.mustChangePwd', lang)}</p>
+        </Card>
+      )}
+
+      {/* Rejected info banner */}
+      {rejectedInfo && (
+        <Card className="p-5 border-rose-200 dark:border-rose-800/60 bg-rose-50/50 dark:bg-rose-950/20">
+          <div className="flex items-start gap-3">
+            <div className="p-2 bg-rose-100 dark:bg-rose-900/40 rounded-lg"><X className="w-5 h-5 text-rose-600" /></div>
+            <div className="flex-1">
+              <h3 className="font-bold text-rose-800 dark:text-rose-200">{t('admin.requests.rejectedTitle', lang)} — {rejectedInfo.name}</h3>
+              <p className="text-sm text-rose-700 dark:text-rose-300 mt-0.5">
+                {rejectedInfo.emailSent
+                  ? `${t('admin.requests.rejectedEmailSent', lang)} ${rejectedInfo.email}.`
+                  : `${mailNotDeliveredHint(lang, rejectedInfo.mailConfigured)} — ${rejectedInfo.email}`}
+              </p>
+              {rejectedInfo.previewUrl && (
+                <a href={rejectedInfo.previewUrl} target="_blank" rel="noopener noreferrer"
+                  className="text-xs text-primary-600 hover:text-primary-700 font-semibold hover:underline flex items-center gap-1 mt-1">
+                  <Mail size={12} /> 👁️ {t('admin.requests.viewRejectEmail', lang)}
+                </a>
+              )}
+              <p className="text-xs text-rose-500 mt-1"><strong>{t('admin.requests.reason', lang)}</strong> {rejectedInfo.reason}</p>
+              <button type="button" onClick={() => setRejectedInfo(null)} className="text-xs text-rose-600 font-medium hover:underline mt-2">{t('admin.requests.close', lang)}</button>
+            </div>
+          </div>
+        </Card>
+      )}
+
+      {loading ? (
+        <div className="flex justify-center py-20"><Loader2 className="animate-spin text-primary-600" size={32} /></div>
+      ) : displayed.length === 0 ? (
+        <Card><EmptyState icon={<ShieldCheck size={32} />} title={t('admin.requests.empty', lang)} description={tab === 'pending' ? t('admin.requests.emptyPendingDesc', lang) : t('admin.requests.emptyAllDesc', lang)} /></Card>
+      ) : (
+        <div className="space-y-3">
+          {displayed.map(req => (
+            <Card key={req.id} className="p-5">
+              <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+                <div className="flex items-start gap-4">
+                  <div className="w-11 h-11 rounded-xl bg-primary-50 dark:bg-primary-900/20 flex items-center justify-center text-primary-600 font-bold text-sm shrink-0">
+                    {req.companyName?.charAt(0)?.toUpperCase()}
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <p className="font-bold text-gray-900 dark:text-white">{req.companyName}</p>
+                      {statusBadge(req.status)}
+                    </div>
+                    <p className="text-sm text-gray-500 mt-0.5">{req.ownerName} • {req.email}</p>
+                    <div className="flex items-center gap-3 mt-1.5">
+                      <Badge>{req.companyCategory}</Badge>
+                      <span className="text-xs text-gray-400">{new Date(req.createdAt).toLocaleDateString(localeForLang(lang))}</span>
+                    </div>
+                  </div>
+                </div>
+                {req.status === 'pending' && (
+                  <div className="flex flex-col gap-2 lg:w-80 shrink-0">
+                    <input
+                      placeholder={t('admin.requests.rejectReason', lang)}
+                      value={rejectReason[req.id] || ''}
+                      onChange={e => setRejectReason(prev => ({ ...prev, [req.id]: e.target.value }))}
+                      className="px-3.5 py-2.5 rounded-xl bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 text-sm outline-none focus:border-primary-500 transition-colors"
+                    />
+                    <div className="flex gap-2">
+                      <PrimaryButton onClick={() => handleAccept(req.id)} disabled={!!processing} variant="success" className="flex-1 py-2.5 text-xs">
+                        {processing === req.id ? <Loader2 size={14} className="animate-spin" /> : <><CheckCircle2 size={14} /> {t('admin.requests.accept', lang)}</>}
+                      </PrimaryButton>
+                      <PrimaryButton onClick={() => handleReject(req.id)} disabled={!!processing || !rejectReason[req.id] || rejectReason[req.id].length < 10} variant="danger" className="flex-1 py-2.5 text-xs">
+                        <X size={14} /> {t('admin.requests.reject', lang)}
+                      </PrimaryButton>
+                    </div>
+                  </div>
+                )}
+                {req.status !== 'pending' && tab === 'all' && (
+                  <div className="lg:w-48 shrink-0">
+                    <PrimaryButton onClick={() => handleDeleteRequest(req.id)} disabled={!!processing} variant="danger" className="w-full py-2.5 text-xs">
+                      {processing === req.id ? <Loader2 size={14} className="animate-spin" /> : <><Trash2 size={14} /> {t('admin.requests.delete', lang)}</>}
+                    </PrimaryButton>
+                  </div>
+                )}
+              </div>
+            </Card>
+          ))}
+        </div>
+      )}
+
+      <AdminEmployeeAccessRequestsPanel lang={lang} />
+    </div>
+  );
+};
+
+const AdminEmployeeAccessRequestsPanel: React.FC<{ lang: UiLang }> = ({ lang }) => {
+  const [requests, setRequests] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [tab, setTab] = useState<'pending' | 'all'>('pending');
+  const [rejectReason, setRejectReason] = useState<Record<string, string>>({});
+  const [processing, setProcessing] = useState<string | null>(null);
+  const [error, setError] = useState('');
+  const [errorSolution, setErrorSolution] = useState<string | undefined>();
+  const [acceptedCredentials, setAcceptedCredentials] = useState<{
+    email: string;
+    tempPassword: string;
+    role: string;
+    companyName: string;
+    emailSent: boolean;
+    previewUrl?: string;
+    mailConfigured?: boolean;
+  } | null>(null);
+  const [rejectedInfo, setRejectedInfo] = useState<{
+    email: string;
+    name: string;
+    reason: string;
+    emailSent: boolean;
+    previewUrl?: string;
+    mailConfigured?: boolean;
+  } | null>(null);
+  const [copied, setCopied] = useState(false);
+
+  const loadRequests = () => {
+    setLoading(true);
+    setError('');
+    RealAPI.getEmployeeAccessRequests()
+      .then(setRequests)
+      .catch((err) => {
+        const { message, solution } = getErrorMessage(err);
+        setError(message);
+        setErrorSolution(solution);
+        setRequests([]);
+      })
+      .finally(() => setLoading(false));
+  };
+
+  useEffect(() => {
+    loadRequests();
+  }, []);
+
+  const pending = requests.filter((r) => r.status === 'pending');
+  const displayed = tab === 'pending' ? pending : requests;
+
+  const handleAccept = async (id: string) => {
+    setProcessing(id);
+    setError('');
+    setAcceptedCredentials(null);
+    setRejectedInfo(null);
+    try {
+      const result = await RealAPI.acceptEmployeeAccessRequest(id);
+      setRequests((prev) => prev.map((r) => (r.id === id ? { ...r, status: 'accepted' } : r)));
+      setAcceptedCredentials({
+        ...result.credentials,
+        emailSent: result.emailSent,
+        previewUrl: result.previewUrl,
+        mailConfigured: result.mailConfigured,
+      });
+    } catch (e) {
+      const { message, solution } = getErrorMessage(e);
+      setError(message);
+      setErrorSolution(solution);
+    } finally {
+      setProcessing(null);
+    }
+  };
+
+  const handleReject = async (id: string) => {
+    const reason = rejectReason[id];
+    if (!reason || reason.length < 10) {
+      setError(t('admin.requests.rejectMinLength', lang));
+      return;
+    }
+    setProcessing(id);
+    setError('');
+    setAcceptedCredentials(null);
+    setRejectedInfo(null);
+    try {
+      const result = await RealAPI.rejectEmployeeAccessRequest(id, reason);
+      setRequests((prev) => prev.map((r) => (r.id === id ? { ...r, status: 'rejected' } : r)));
+      setRejectReason((prev) => ({ ...prev, [id]: '' }));
+      setRejectedInfo({
+        ...result.rejectedUser,
+        emailSent: result.emailSent,
+        previewUrl: result.previewUrl,
+        mailConfigured: result.mailConfigured,
+      });
+    } catch (e) {
+      const { message, solution } = getErrorMessage(e);
+      setError(message);
+      setErrorSolution(solution);
+    } finally {
+      setProcessing(null);
+    }
+  };
+
+  const handleCopyCredentials = () => {
+    if (!acceptedCredentials) return;
+    const text = `${acceptedCredentials.email}\n${acceptedCredentials.tempPassword}`;
+    navigator.clipboard
+      .writeText(text)
+      .then(() => {
+        setCopied(true);
+        setTimeout(() => setCopied(false), 2000);
+      });
+  };
+
+  const statusBadge = (status: string) => {
+    if (status === 'accepted') return <Badge variant="success"><CheckCircle2 size={12} /> {t('admin.requests.accepted', lang)}</Badge>;
+    if (status === 'rejected') return <Badge variant="danger"><X size={12} /> {t('admin.requests.rejected', lang)}</Badge>;
+    return <Badge variant="warning"><Clock size={12} /> {t('admin.requests.pending', lang)}</Badge>;
+  };
+
+  return (
+    <Card className="p-5">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4">
+        <div>
+          <h3 className="font-bold text-gray-900 dark:text-white">{t('admin.employeeReq.title', lang)}</h3>
+          <p className="text-xs text-gray-500 mt-0.5">{t('admin.employeeReq.desc', lang)}</p>
+        </div>
+        <PrimaryButton onClick={loadRequests} variant="outline" className="px-4 py-2 text-xs">
+          <RefreshCw size={14} className={loading ? 'animate-spin' : ''} /> {t('common.refresh', lang)}
+        </PrimaryButton>
+      </div>
+
+      <div className="flex gap-1 bg-gray-100 dark:bg-gray-800 rounded-xl p-1 w-fit mb-4">
+        <button type="button" onClick={() => setTab('pending')} className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${tab === 'pending' ? 'bg-white dark:bg-gray-700 shadow-sm text-gray-900 dark:text-white' : 'text-gray-500'}`}>
+          {t('admin.requests.pending', lang)} {pending.length > 0 && <span className="ml-1.5 px-1.5 py-0.5 bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400 rounded text-xs font-bold">{pending.length}</span>}
+        </button>
+        <button type="button" onClick={() => setTab('all')} className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${tab === 'all' ? 'bg-white dark:bg-gray-700 shadow-sm text-gray-900 dark:text-white' : 'text-gray-500'}`}>
+          {t('admin.requests.all', lang)} ({requests.length})
+        </button>
+      </div>
+
+      {error && <ErrorAlert message={error} solution={errorSolution} onDismiss={() => { setError(''); setErrorSolution(undefined); }} />}
+
+      {acceptedCredentials && (
+        <Card className="p-4 mb-4 border-emerald-200 dark:border-emerald-800/60 bg-emerald-50/50 dark:bg-emerald-950/20">
+          <p className="text-sm text-emerald-800 dark:text-emerald-300 font-semibold">{t('admin.employeeReq.acceptedBanner', lang)}</p>
+          <p className="text-xs text-emerald-700 dark:text-emerald-300 mt-1">
+            {acceptedCredentials.emailSent ? t('admin.employeeReq.emailSentShort', lang) : mailNotDeliveredHint(lang, acceptedCredentials.mailConfigured)}
+          </p>
+          <div className="mt-3 grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <div><p className="text-[11px] text-gray-400 uppercase tracking-wider">{t('common.email', lang)}</p><p className="font-mono font-semibold text-sm">{acceptedCredentials.email}</p></div>
+            <div><p className="text-[11px] text-gray-400 uppercase tracking-wider">{t('admin.requests.tempPassword', lang)}</p><p className="font-mono font-semibold text-sm text-primary-600">{acceptedCredentials.tempPassword}</p></div>
+            <div><p className="text-[11px] text-gray-400 uppercase tracking-wider">{t('admin.requests.assignedRole', lang)}</p><p className="font-semibold text-sm">{acceptedCredentials.role}</p></div>
+          </div>
+          <div className="mt-3 flex gap-2">
+            <PrimaryButton onClick={handleCopyCredentials} variant="outline" className="px-4 py-2 text-xs">
+              {copied ? <><CheckCircle2 size={12} /> {t('admin.requests.copied', lang)}</> : <><Copy size={12} /> {t('admin.requests.copy', lang)}</>}
+            </PrimaryButton>
+            <PrimaryButton onClick={() => setAcceptedCredentials(null)} variant="outline" className="px-4 py-2 text-xs">{t('admin.requests.close', lang)}</PrimaryButton>
+          </div>
+          {acceptedCredentials.previewUrl && (
+            <a href={acceptedCredentials.previewUrl} target="_blank" rel="noopener noreferrer" className="mt-2 flex items-center gap-2 text-xs text-primary-600 hover:text-primary-700 font-semibold hover:underline">
+              <Mail size={12} /> 👁️ {t('admin.requests.viewEmail', lang)}
+            </a>
+          )}
+        </Card>
+      )}
+
+      {rejectedInfo && (
+        <Card className="p-4 mb-4 border-rose-200 dark:border-rose-800/60 bg-rose-50/50 dark:bg-rose-950/20">
+          <p className="text-sm text-rose-800 dark:text-rose-300 font-semibold">{t('admin.employeeReq.rejectedBanner', lang)} — {rejectedInfo.name}</p>
+          <p className="text-xs text-rose-700 dark:text-rose-300 mt-1">
+            {rejectedInfo.emailSent
+              ? `${t('admin.requests.rejectedEmailSent', lang)} ${rejectedInfo.email}.`
+              : `${mailNotDeliveredHint(lang, rejectedInfo.mailConfigured)} — ${rejectedInfo.email}`}
+          </p>
+          <p className="text-xs text-rose-500 mt-1"><strong>{t('admin.requests.reason', lang)}</strong> {rejectedInfo.reason}</p>
+          {rejectedInfo.previewUrl && (
+            <a href={rejectedInfo.previewUrl} target="_blank" rel="noopener noreferrer" className="text-xs text-primary-600 hover:text-primary-700 font-semibold hover:underline flex items-center gap-1 mt-1">
+              <Mail size={12} /> 👁️ {t('admin.requests.viewRejectEmail', lang)}
+            </a>
+          )}
+        </Card>
+      )}
+
+      {loading ? (
+        <div className="flex justify-center py-10"><Loader2 className="animate-spin text-primary-600" size={28} /></div>
+      ) : displayed.length === 0 ? (
+        <EmptyState icon={<UserPlus size={26} />} title={t('admin.employeeReq.emptyTitle', lang)} description={tab === 'pending' ? t('admin.employeeReq.emptyPending', lang) : t('admin.employeeReq.emptyAll', lang)} />
+      ) : (
+        <div className="space-y-3">
+          {displayed.map((req) => (
+            <Card key={req.id} className="p-4">
+              <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+                <div>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <p className="font-semibold text-gray-900 dark:text-white">{req.fullName}</p>
+                    {statusBadge(req.status)}
+                    <Badge variant="info">{roleJobLabel(req.desiredRole, lang)}</Badge>
+                  </div>
+                  <p className="text-sm text-gray-500 mt-0.5">{req.email}</p>
+                  <p className="text-xs text-gray-400 mt-1">{t('admin.requests.company', lang)}: {req.companyName} • {new Date(req.createdAt).toLocaleDateString(localeForLang(lang))}</p>
+                </div>
+                {req.status === 'pending' && (
+                  <div className="flex flex-col gap-2 lg:w-80 shrink-0">
+                    <input
+                      placeholder={t('admin.requests.rejectReason', lang)}
+                      value={rejectReason[req.id] || ''}
+                      onChange={(e) => setRejectReason((prev) => ({ ...prev, [req.id]: e.target.value }))}
+                      className="px-3.5 py-2.5 rounded-xl bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 text-sm outline-none focus:border-primary-500 transition-colors"
+                    />
+                    <div className="flex gap-2">
+                      <PrimaryButton onClick={() => handleAccept(req.id)} disabled={!!processing} variant="success" className="flex-1 py-2.5 text-xs">
+                        {processing === req.id ? <Loader2 size={14} className="animate-spin" /> : <><CheckCircle2 size={14} /> {t('admin.requests.accept', lang)}</>}
+                      </PrimaryButton>
+                      <PrimaryButton onClick={() => handleReject(req.id)} disabled={!!processing || !rejectReason[req.id] || rejectReason[req.id].length < 10} variant="danger" className="flex-1 py-2.5 text-xs">
+                        <X size={14} /> {t('admin.requests.reject', lang)}
+                      </PrimaryButton>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </Card>
+          ))}
+        </div>
+      )}
+    </Card>
+  );
+};
+
+const EmployeeCompanyJoinView: React.FC<{ lang: UiLang }> = ({ lang }) => {
+  const [companies, setCompanies] = useState<CompanyBackend[]>([]);
+  const [myRequests, setMyRequests] = useState<CompanyJoinRequestBackend[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [sending, setSending] = useState(false);
+  const [error, setError] = useState('');
+  const [errorSolution, setErrorSolution] = useState<string | undefined>();
+  const [form, setForm] = useState({
+    companyId: '',
+    desiredRole: 'employee' as 'manager' | 'employee' | 'accountant',
+    profileDetails: '',
+  });
+
+  const loadData = async () => {
+    setLoading(true);
+    setError('');
+    try {
+      const [allCompanies, requests] = await Promise.all([
+        RealAPI.discoverCompanies(),
+        RealAPI.getMyCompanyJoinRequests(),
+      ]);
+      setCompanies(allCompanies);
+      setMyRequests(requests);
+    } catch (err) {
+      const { message, solution } = getErrorMessage(err);
+      setError(message);
+      setErrorSolution(solution);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    void loadData();
+  }, []);
+
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!form.companyId) {
+      setError(t('page.joinCompany.errSelectCompany', lang));
+      return;
+    }
+    if (!form.profileDetails.trim()) {
+      setError(t('page.joinCompany.errProfile', lang));
+      return;
+    }
+    setSending(true);
+    setError('');
+    try {
+      await RealAPI.createCompanyJoinRequest({
+        companyId: form.companyId,
+        desiredRole: form.desiredRole,
+        profileDetails: form.profileDetails.trim(),
+      });
+      setForm({ companyId: '', desiredRole: 'employee', profileDetails: '' });
+      await loadData();
+    } catch (err) {
+      const { message, solution } = getErrorMessage(err);
+      setError(message);
+      setErrorSolution(solution);
+    } finally {
+      setSending(false);
+    }
+  };
+
+  const roleDetailsLabel =
+    form.desiredRole === 'manager'
+      ? t('page.joinCompany.profileManager', lang)
+      : form.desiredRole === 'accountant'
+      ? t('page.joinCompany.profileAccountant', lang)
+      : t('page.joinCompany.profileEmployee', lang);
+
+  const statusBadge = (status: string) => {
+    if (status === 'accepted') return <Badge variant="success"><CheckCircle2 size={12} /> {t('admin.requests.accepted', lang)}</Badge>;
+    if (status === 'rejected') return <Badge variant="danger"><X size={12} /> {t('admin.requests.rejected', lang)}</Badge>;
+    return <Badge variant="warning"><Clock size={12} /> {t('admin.requests.pending', lang)}</Badge>;
+  };
+
+  return (
+    <div className="space-y-6">
+      <PageHeader
+        title={t('page.joinCompany.title', lang)}
+        description={t('page.joinCompany.desc', lang)}
+        actions={
+          <PrimaryButton onClick={loadData} variant="outline" className="px-4 py-2 text-sm">
+            <RefreshCw size={14} className={loading ? 'animate-spin' : ''} /> {t('page.joinCompany.refresh', lang)}
+          </PrimaryButton>
+        }
+      />
+
+      {error && <ErrorAlert message={error} solution={errorSolution} onDismiss={() => { setError(''); setErrorSolution(undefined); }} />}
+
+      <Card className="p-6">
+        <h3 className="font-bold text-gray-900 dark:text-white mb-4">{t('page.joinCompany.formTitle', lang)}</h3>
+        <form onSubmit={submit} className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <SelectField
+            label={t('auth.companyField', lang)}
+            value={form.companyId}
+            onChange={(v) => setForm({ ...form, companyId: v })}
+            options={[
+              { value: '', label: t('page.joinCompany.selectCompany', lang) },
+              ...companies.map((c) => ({ value: c.id, label: c.name })),
+            ]}
+            required
+          />
+          <SelectField
+            label={t('page.joinCompany.desiredRole', lang)}
+            value={form.desiredRole}
+            onChange={(v) => setForm({ ...form, desiredRole: v as 'manager' | 'employee' | 'accountant' })}
+            options={roleJobSelectOptions(lang)}
+            required
+          />
+          <InputField
+            label={roleDetailsLabel}
+            value={form.profileDetails}
+            onChange={(v) => setForm({ ...form, profileDetails: v })}
+            placeholder={t('page.joinCompany.profilePlaceholder', lang)}
+            required
+          />
+          <div className="md:col-span-3 flex justify-end">
+            <PrimaryButton type="submit" loading={sending} className="px-5 py-2.5 text-sm">
+              {t('page.joinCompany.sendToOwner', lang)}
+            </PrimaryButton>
+          </div>
+        </form>
+      </Card>
+
+      <Card className="p-6">
+        <h3 className="font-bold text-gray-900 dark:text-white mb-4">{t('page.joinCompany.myRequests', lang)}</h3>
+        {loading ? (
+          <div className="flex justify-center py-10"><Loader2 className="animate-spin text-primary-600" size={28} /></div>
+        ) : myRequests.length === 0 ? (
+          <EmptyState icon={<Building2 size={28} />} title={t('page.joinCompany.emptySentTitle', lang)} description={t('page.joinCompany.emptySentDesc', lang)} />
+        ) : (
+          <div className="space-y-3">
+            {myRequests.map((req) => (
+              <Card key={req.id} className="p-4">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <p className="font-semibold text-gray-900 dark:text-white">{req.company?.name || req.companyId}</p>
+                    <p className="text-xs text-gray-500 mt-0.5">{t('join.manager.requestedRole', lang)} {roleJobLabel(req.desiredRole, lang)}</p>
+                    {req.profileDetails && <p className="text-xs text-gray-400 mt-1">{req.profileDetails}</p>}
+                    {req.rejectionReason && <p className="text-xs text-rose-500 mt-1">{t('page.joinCompany.reasonPrefix', lang)} {req.rejectionReason}</p>}
+                  </div>
+                  {statusBadge(req.status)}
+                </div>
+              </Card>
+            ))}
+          </div>
+        )}
+      </Card>
+    </div>
+  );
+};
+
+const CompanyJoinRequestsManager: React.FC<{ companyId: string; lang: UiLang }> = ({ companyId, lang }) => {
+  const [requests, setRequests] = useState<CompanyJoinRequestBackend[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [processing, setProcessing] = useState<string | null>(null);
+  const [error, setError] = useState('');
+  const [errorSolution, setErrorSolution] = useState<string | undefined>();
+  const [rejectReason, setRejectReason] = useState<Record<string, string>>({});
+
+  const load = async () => {
+    setLoading(true);
+    setError('');
+    try {
+      const data = await RealAPI.getCompanyJoinRequests(companyId);
+      setRequests(data);
+    } catch (err) {
+      const { message, solution } = getErrorMessage(err);
+      setError(message);
+      setErrorSolution(solution);
+      setRequests([]);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    void load();
+  }, [companyId]);
+
+  const onAccept = async (id: string) => {
+    setProcessing(id);
+    setError('');
+    try {
+      await RealAPI.acceptCompanyJoinRequest(companyId, id);
+      await load();
+    } catch (err) {
+      const { message, solution } = getErrorMessage(err);
+      setError(message);
+      setErrorSolution(solution);
+    } finally {
+      setProcessing(null);
+    }
+  };
+
+  const onReject = async (id: string) => {
+    const reason = rejectReason[id];
+    if (!reason || reason.length < 10) {
+      setError(t('admin.requests.rejectMinLength', lang));
+      return;
+    }
+    setProcessing(id);
+    setError('');
+    try {
+      await RealAPI.rejectCompanyJoinRequest(companyId, id, reason);
+      setRejectReason((prev) => ({ ...prev, [id]: '' }));
+      await load();
+    } catch (err) {
+      const { message, solution } = getErrorMessage(err);
+      setError(message);
+      setErrorSolution(solution);
+    } finally {
+      setProcessing(null);
+    }
+  };
+
+  const pending = requests.filter((r) => r.status === 'pending');
+
+  return (
+    <Card className="p-6">
+      <div className="flex items-center justify-between mb-4">
+        <h3 className="font-bold text-gray-900 dark:text-white">{t('join.manager.title', lang)}</h3>
+        <PrimaryButton onClick={load} variant="outline" className="px-4 py-2 text-xs">
+          <RefreshCw size={14} className={loading ? 'animate-spin' : ''} /> {t('common.refresh', lang)}
+        </PrimaryButton>
+      </div>
+      {error && <ErrorAlert message={error} solution={errorSolution} onDismiss={() => { setError(''); setErrorSolution(undefined); }} />}
+      {loading ? (
+        <div className="flex justify-center py-10"><Loader2 className="animate-spin text-primary-600" size={28} /></div>
+      ) : pending.length === 0 ? (
+        <EmptyState icon={<UserPlus size={26} />} title={t('join.manager.emptyTitle', lang)} description={t('join.manager.emptyDesc', lang)} />
+      ) : (
+        <div className="space-y-3">
+          {pending.map((req) => (
+            <Card key={req.id} className="p-4">
+              <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+                <div>
+                  <p className="font-semibold text-gray-900 dark:text-white">{req.requesterUser?.name || req.requesterUserId}</p>
+                  <p className="text-sm text-gray-500">{req.requesterUser?.email}</p>
+                  <p className="text-xs text-gray-400 mt-1">{t('join.manager.requestedRole', lang)} {roleJobLabel(req.desiredRole, lang)}</p>
+                  {req.profileDetails && <p className="text-xs text-gray-500 mt-1">{req.profileDetails}</p>}
+                </div>
+                <div className="lg:w-80 space-y-2">
+                  <input
+                    placeholder={t('join.manager.rejectPh', lang)}
+                    value={rejectReason[req.id] || ''}
+                    onChange={(e) => setRejectReason((prev) => ({ ...prev, [req.id]: e.target.value }))}
+                    className="w-full px-3.5 py-2.5 rounded-xl bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 text-sm outline-none focus:border-primary-500 transition-colors"
+                  />
+                  <div className="flex gap-2">
+                    <PrimaryButton onClick={() => onAccept(req.id)} disabled={!!processing} variant="success" className="flex-1 py-2.5 text-xs">
+                      {processing === req.id ? <Loader2 size={14} className="animate-spin" /> : <><CheckCircle2 size={14} /> {t('admin.requests.accept', lang)}</>}
+                    </PrimaryButton>
+                    <PrimaryButton onClick={() => onReject(req.id)} disabled={!!processing || !rejectReason[req.id] || rejectReason[req.id].length < 10} variant="danger" className="flex-1 py-2.5 text-xs">
+                      <X size={14} /> {t('admin.requests.reject', lang)}
+                    </PrimaryButton>
+                  </div>
+                </div>
+              </div>
+            </Card>
+          ))}
+        </div>
+      )}
+    </Card>
+  );
+};
+
+/* ================================================================
+   ADMIN - EMPLOYEES
+   ================================================================ */
+
+const AdminEmployeesView: React.FC<{ companyId: string; lang: UiLang }> = ({ companyId, lang }) => {
+  const [employees, setEmployees] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [showForm, setShowForm] = useState(false);
+  const [form, setForm] = useState({ email: '', name: '', role: 'employee' as 'manager' | 'employee' | 'accountant' });
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState('');
+  const [errorSolution, setErrorSolution] = useState<string | undefined>();
+  const [createdCredentials, setCreatedCredentials] = useState<{
+    email: string;
+    tempPassword: string;
+    role: string;
+    name: string;
+    emailSent: boolean;
+    previewUrl?: string;
+    mailConfigured?: boolean;
+  } | null>(null);
+  const [copiedEmp, setCopiedEmp] = useState(false);
+
+  const loadEmployees = () => {
+    setLoading(true); setError('');
+    RealAPI.getEmployees(companyId).then(setEmployees)
+      .catch(err => { const { message, solution } = getErrorMessage(err); setError(message); setErrorSolution(solution); setEmployees([]); })
+      .finally(() => setLoading(false));
+  };
+  useEffect(() => { loadEmployees(); }, [companyId]);
+
+  const validateEmployee = (): string | null => {
+    const name = form.name.trim();
+    const email = form.email.trim();
+    if (!name || name.length < 2) return 'Le nom de l\'employé doit contenir au moins 2 caractères.';
+    if (!/^[a-zA-ZÀ-ÿ\s\-\']+$/.test(name)) return 'Le nom ne doit contenir que des lettres, espaces, tirets ou apostrophes.';
+    if (!email) return 'L\'email est obligatoire.';
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return 'Veuillez fournir un email valide (ex: nom@entreprise.com).';
+    if (!['manager', 'employee', 'accountant'].includes(form.role)) return 'Veuillez sélectionner un rôle valide.';
+    return null;
+  };
+
+  const handleCreate = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const validationError = validateEmployee();
+    if (validationError) { setError(validationError); setErrorSolution(undefined); return; }
+    setSubmitting(true); setError(''); setCreatedCredentials(null);
+    try {
+      const result = await RealAPI.createEmployee(companyId, form);
+      loadEmployees();
+      setShowForm(false);
+      setCreatedCredentials({
+        email: form.email,
+        tempPassword: result.tempPassword,
+        role: result.role,
+        name: form.name,
+        emailSent: result.emailSent,
+        previewUrl: result.previewUrl,
+        mailConfigured: result.mailConfigured,
+      });
+      setForm({ email: '', name: '', role: 'employee' });
+    } catch (err) { const { message, solution } = getErrorMessage(err); setError(message); setErrorSolution(solution); }
+    finally { setSubmitting(false); }
+  };
+
+  const handleCopyEmpCredentials = () => {
+    if (!createdCredentials) return;
+    const text = `${createdCredentials.email}\n${createdCredentials.tempPassword}`;
+    navigator.clipboard.writeText(text).then(() => { setCopiedEmp(true); setTimeout(() => setCopiedEmp(false), 2000); });
+  };
+
+  const roleColor = (r: string): 'info' | 'warning' | 'success' | 'default' => r === 'manager' ? 'info' : r === 'accountant' ? 'warning' : r === 'owner' ? 'success' : 'default';
+
+  return (
+    <div className="space-y-6">
+      <PageHeader title={t('emp.title', lang)} description={t('emp.desc', lang)}
+        actions={
+          <div className="flex gap-2">
+            <PrimaryButton onClick={loadEmployees} variant="outline" className="px-4 py-2 text-sm"><RefreshCw size={14} className={loading ? 'animate-spin' : ''} /> {t('common.refresh', lang)}</PrimaryButton>
+            <PrimaryButton onClick={() => { setShowForm(!showForm); setError(''); setCreatedCredentials(null); }} className="px-4 py-2.5 text-sm"><UserPlus size={16} /> {t('emp.add', lang)}</PrimaryButton>
+          </div>
+        }
+      />
+
+      {error && <ErrorAlert message={error} solution={errorSolution} onDismiss={() => { setError(''); setErrorSolution(undefined); }} />}
+
+      {/* Created employee credentials banner */}
+      {createdCredentials && (
+        <Card className="p-5 border-emerald-200 dark:border-emerald-800/60 bg-emerald-50/50 dark:bg-emerald-950/20">
+          <div className="flex items-start gap-3 mb-4">
+            <div className="p-2 bg-emerald-100 dark:bg-emerald-900/40 rounded-lg"><UserCheck className="w-5 h-5 text-emerald-600" /></div>
+            <div>
+              <h3 className="font-bold text-emerald-800 dark:text-emerald-200">{t('emp.createdBanner', lang)} — {createdCredentials.name}</h3>
+              <p className="text-sm text-emerald-700 dark:text-emerald-300 mt-0.5">
+                {createdCredentials.emailSent
+                  ? t('emp.emailSent', lang)
+                  : mailNotDeliveredHint(lang, createdCredentials.mailConfigured)}
+              </p>
+            </div>
+          </div>
+          <div className="bg-white dark:bg-gray-900 rounded-xl p-4 border border-emerald-200 dark:border-emerald-800/40">
+            <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3 flex items-center gap-2"><KeyRound size={12} /> {t('emp.loginCredentials', lang)}</p>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <div>
+                <p className="text-[11px] text-gray-400 uppercase tracking-wider">{t('common.email', lang)}</p>
+                <p className="font-mono font-semibold text-sm text-gray-900 dark:text-white">{createdCredentials.email}</p>
+              </div>
+              <div>
+                <p className="text-[11px] text-gray-400 uppercase tracking-wider">{t('admin.requests.tempPassword', lang)}</p>
+                <p className="font-mono font-semibold text-sm text-primary-600">{createdCredentials.tempPassword}</p>
+              </div>
+              <div>
+                <p className="text-[11px] text-gray-400 uppercase tracking-wider">{t('emp.role', lang)}</p>
+                <p className="font-semibold text-sm text-gray-900 dark:text-white">{createdCredentials.role}</p>
+              </div>
+            </div>
+            <div className="mt-3 flex gap-2">
+              <PrimaryButton onClick={handleCopyEmpCredentials} variant="outline" className="px-4 py-2 text-xs">
+                {copiedEmp ? <><CheckCircle2 size={12} /> {t('emp.copied', lang)}</> : <><Copy size={12} /> {t('emp.copyIds', lang)}</>}
+              </PrimaryButton>
+              <PrimaryButton onClick={() => setCreatedCredentials(null)} variant="outline" className="px-4 py-2 text-xs">{t('emp.close', lang)}</PrimaryButton>
+            </div>
+          </div>
+          {createdCredentials.previewUrl && (
+            <a href={createdCredentials.previewUrl} target="_blank" rel="noopener noreferrer"
+              className="mt-3 flex items-center gap-2 text-sm text-primary-600 hover:text-primary-700 font-semibold hover:underline">
+              <Mail size={14} /> 👁️ {t('emp.viewInviteEmail', lang)}
+            </a>
+          )}
+          <p className="text-xs text-emerald-600 dark:text-emerald-400 mt-2 flex items-center gap-1"><Info size={12} /> {t('emp.mustChangePwd', lang)}</p>
+        </Card>
+      )}
+
+      {showForm && (
+        <Card className="p-6">
+          <h3 className="font-bold text-gray-900 dark:text-white mb-4 flex items-center gap-2"><UserPlus size={18} className="text-primary-600" /> {t('emp.newEmployee', lang)}</h3>
+          <form onSubmit={handleCreate} className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <InputField label={t('emp.fullName', lang)} value={form.name} onChange={v => setForm({ ...form, name: v })} placeholder={t('emp.fullNamePh', lang)} required />
+            <InputField label={t('emp.email', lang)} type="email" value={form.email} onChange={v => setForm({ ...form, email: v })} placeholder={t('emp.emailPh', lang)} required icon={<Mail size={16} />} />
+            <SelectField label={t('emp.role', lang)} value={form.role} onChange={v => setForm({ ...form, role: v as any })} options={roleJobSelectOptions(lang)} required />
+            <div className="md:col-span-3 flex justify-end gap-2 pt-2">
+              <PrimaryButton onClick={() => setShowForm(false)} variant="outline" className="px-5 py-2.5 text-sm">{t('emp.cancel', lang)}</PrimaryButton>
+              <PrimaryButton type="submit" loading={submitting} className="px-5 py-2.5 text-sm">{t('emp.createInvite', lang)}</PrimaryButton>
+            </div>
+          </form>
+        </Card>
+      )}
+
+      {loading ? (
+        <div className="flex justify-center py-20"><Loader2 className="animate-spin text-primary-600" size={32} /></div>
+      ) : employees.length === 0 ? (
+        <Card><EmptyState icon={<Users size={32} />} title={t('emp.empty', lang)} description={t('emp.emptyDesc', lang)}
+          action={<PrimaryButton onClick={() => setShowForm(true)} className="px-5 py-2.5 text-sm"><UserPlus size={16} /> {t('emp.addFirst', lang)}</PrimaryButton>}
+        /></Card>
+      ) : (
+        <Card className="overflow-hidden">
+          <table className="w-full text-left">
+            <thead className="bg-gray-50 dark:bg-gray-800/50 border-b border-gray-100 dark:border-gray-800">
+              <tr>
+                <th className="px-6 py-3.5 text-xs font-semibold text-gray-500 uppercase tracking-wider">{t('emp.colEmployee', lang)}</th>
+                <th className="px-6 py-3.5 text-xs font-semibold text-gray-500 uppercase tracking-wider">{t('common.email', lang)}</th>
+                <th className="px-6 py-3.5 text-xs font-semibold text-gray-500 uppercase tracking-wider">{t('emp.role', lang)}</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-100 dark:divide-gray-800">
+              {employees.map(emp => (
+                <tr key={emp.id} className="hover:bg-gray-50/50 dark:hover:bg-gray-800/30 transition-colors">
+                  <td className="px-6 py-4">
+                    <div className="flex items-center gap-3">
+                      <div className="w-9 h-9 rounded-full bg-primary-100 dark:bg-primary-900/30 text-primary-600 flex items-center justify-center text-xs font-bold">
+                        {emp.name?.split(' ').map((n: string) => n[0]).join('').slice(0, 2).toUpperCase()}
+                      </div>
+                      <span className="font-semibold text-gray-900 dark:text-white text-sm">{emp.name}</span>
+                    </div>
+                  </td>
+                  <td className="px-6 py-4 text-sm text-gray-500">{emp.email}</td>
+                  <td className="px-6 py-4"><Badge variant={roleColor(emp.role)}>{roleJobLabel(emp.role, lang)}</Badge></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </Card>
+      )}
+
+      <CompanyJoinRequestsManager companyId={companyId} lang={lang} />
+    </div>
+  );
+};
+
+/* ================================================================
+   ADMIN DASHBOARD
+   ================================================================ */
+
+function dashboardLast6Periods(): string[] {
+  const out: string[] = [];
+  const d = new Date();
+  for (let i = 5; i >= 0; i -= 1) {
+    const x = new Date(d.getFullYear(), d.getMonth() - i, 1);
+    out.push(`${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, '0')}`);
+  }
+  return out;
+}
+
+function dashboardPeriodLabel(period: string, lang: UiLang): string {
+  const [ys, ms] = period.split('-');
+  const y = parseInt(ys, 10);
+  const m = parseInt(ms, 10);
+  if (!Number.isFinite(y) || !Number.isFinite(m)) return period;
+  const dt = new Date(y, m - 1, 1);
+  return dt.toLocaleString(localeForLang(lang), { month: 'short', year: '2-digit' });
+}
+
+const AdminDashboardView: React.FC<{ tenant: Tenant | null; user: User; lang: UiLang }> = ({
+  tenant,
+  user,
+  lang,
+}) => {
+  const [summary, setSummary] = useState<DashboardSummaryBackend | null>(null);
+  const [dashLoading, setDashLoading] = useState(true);
+  const [dashErr, setDashErr] = useState('');
+
+  const loadSummary = useCallback(async () => {
+    setDashLoading(true);
+    setDashErr('');
+    try {
+      const s = await RealAPI.getDashboardSummary();
+      setSummary(s);
+    } catch (e) {
+      setDashErr(getErrorMessage(e).message);
+      setSummary(null);
+    } finally {
+      setDashLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadSummary();
+  }, [loadSummary, user.activeCompanyId, user.companyId]);
+
+  useEffect(() => {
+    const fn = () => void loadSummary();
+    window.addEventListener(FINOPS_DATA_CHANGED_EVENT, fn);
+    return () => window.removeEventListener(FINOPS_DATA_CHANGED_EVENT, fn);
+  }, [loadSummary]);
+
+  const chartRows = useMemo(() => {
+    const periods = dashboardLast6Periods();
+    const byP = new Map((summary?.monthly ?? []).map((m) => [m.period, m]));
+    return periods.map((period) => {
+      const hit = byP.get(period);
+      return {
+        name: dashboardPeriodLabel(period, lang),
+        revenue: hit?.revenue ?? 0,
+        expenses: hit?.expenses ?? 0,
+      };
+    });
+  }, [summary, lang]);
+
+  const handleExport = () => {
+    const rows = chartRows.map((r) => ({
+      month: r.name,
+      revenue: r.revenue,
+      expenses: r.expenses,
+      profit: r.revenue - r.expenses,
+    }));
+    downloadCsv(`dashboard-${tenant?.name || 'finops'}.csv`, rows);
+  };
+
+  const loc = localeForLang(lang);
+  const fmt = (n: number) => `${n.toLocaleString(loc, { minimumFractionDigits: 0, maximumFractionDigits: 2 })} €`;
+
+  return (
+    <div className="space-y-6">
+      <PageHeader
+        title={t('page.dashboard.title', lang)}
+        description={`${t('page.dashboard.overview', lang)} ${tenant?.name || t('page.dashboard.companyFallback', lang)}`}
+        actions={
+          <div className="flex items-center gap-2">
+            <PrimaryButton
+              type="button"
+              variant="outline"
+              className="px-4 py-2.5 text-sm"
+              onClick={() => void loadSummary()}
+              disabled={dashLoading}
+            >
+              <RefreshCw size={16} className={dashLoading ? 'animate-spin' : ''} /> {t('common.refresh', lang)}
+            </PrimaryButton>
+            <PrimaryButton onClick={handleExport} className="px-5 py-2.5 text-sm">
+              <Download size={16} /> {t('dash.export', lang)}
+            </PrimaryButton>
+          </div>
+        }
+      />
+
+      {dashErr && <ErrorAlert message={dashErr} onDismiss={() => setDashErr('')} />}
+
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <div className="lg:col-span-2 grid grid-cols-1 sm:grid-cols-2 gap-4">
+          {dashLoading && !summary ? (
+            <div className="sm:col-span-2 flex justify-center py-12">
+              <Loader2 className="animate-spin text-primary-600" size={32} />
+            </div>
+          ) : (
+            <>
+              <StatCard
+                title={t('dash.invoicedExclDraft', lang)}
+                value={fmt(summary?.invoicedTotal ?? 0)}
+                icon={<TrendingUp size={20} />}
+              />
+              <StatCard
+                title={t('dash.totalExpenses', lang)}
+                value={fmt(summary?.expenseTotal ?? 0)}
+                icon={<Wallet size={20} />}
+              />
+              <StatCard
+                title={t('dash.activeClients', lang)}
+                value={String(summary?.clientCount ?? 0)}
+                icon={<Users size={20} />}
+              />
+              <StatCard
+                title={t('dash.netPaidMinusExpenses', lang)}
+                value={fmt(summary?.netPaidMinusExpenses ?? 0)}
+                icon={<CheckCircle2 size={20} />}
+              />
+              {summary != null && summary.outstandingTotal > 0 && (
+                <div className="sm:col-span-2 text-sm text-amber-600 dark:text-amber-400">
+                  {t('dash.pendingInvoices', lang)}:{' '}
+                  <span className="font-semibold">{fmt(summary.outstandingTotal)}</span>
+                </div>
+              )}
+            </>
+          )}
+        </div>
+        <SmartInsightCard lang={lang} />
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <AICashFlowCopilotPanel lang={lang} />
+        <AIForecastPanel lang={lang} />
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <AICostOptimizationPanel lang={lang} />
+        <AIMonthlyReportCard lang={lang} />
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <Card className="p-6">
+          <h2 className="font-bold text-gray-900 dark:text-white mb-6">{t('dash.chartRevenue6m', lang)}</h2>
+          <div className="h-[280px]">
+            <ResponsiveContainer width="100%" height="100%">
+              <AreaChart data={chartRows}>
+                <defs>
+                  <linearGradient id="revenueGrad" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="5%" stopColor="#2563eb" stopOpacity={0.15} />
+                    <stop offset="95%" stopColor="#2563eb" stopOpacity={0} />
+                  </linearGradient>
+                </defs>
+                <Tooltip
+                  contentStyle={{ borderRadius: '12px', background: '#111827', border: 'none', color: '#fff', fontSize: '13px' }}
+                />
+                <Area type="monotone" dataKey="revenue" stroke="#2563eb" strokeWidth={3} fill="url(#revenueGrad)" />
+              </AreaChart>
+            </ResponsiveContainer>
+          </div>
+        </Card>
+        <Card className="p-6">
+          <h2 className="font-bold text-gray-900 dark:text-white mb-6">{t('dash.chartExpenses6m', lang)}</h2>
+          <div className="h-[280px]">
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={chartRows}>
+                <Tooltip
+                  contentStyle={{ borderRadius: '12px', background: '#111827', border: 'none', color: '#fff', fontSize: '13px' }}
+                />
+                <Bar dataKey="expenses" fill="#f43f5e" radius={[6, 6, 0, 0]} />
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+        </Card>
+      </div>
+    </div>
+  );
+};
+
+/* ================================================================
+   ADMIN - INVOICES
+   ================================================================ */
+
+const AdminInvoicesView: React.FC<{ user: User; lang: UiLang }> = ({ user, lang }) => {
+  const [data, setData] = useState<Invoice[]>([]);
+  const [crmClients, setCrmClients] = useState<Client[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [err, setErr] = useState('');
+  const [success, setSuccess] = useState('');
+  const [modalOpen, setModalOpen] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [intakeOpen, setIntakeOpen] = useState(false);
+  const [intakeLoading, setIntakeLoading] = useState(false);
+  const [intakeApplying, setIntakeApplying] = useState(false);
+  const [intakeSourceText, setIntakeSourceText] = useState('');
+  const [intakeDocumentType, setIntakeDocumentType] = useState<'auto' | 'invoice' | 'receipt'>('auto');
+  const [intakeResult, setIntakeResult] = useState<AiSmartDocumentIntakeResponse | null>(null);
+  const [paymentSuggestionOpen, setPaymentSuggestionOpen] = useState(false);
+  const [paymentSuggestionInvoice, setPaymentSuggestionInvoice] = useState<Invoice | null>(null);
+  const [paymentSuggestionData, setPaymentSuggestionData] = useState<{
+    invoiceId: string;
+    recommendationType: string;
+    numberOfChunks: number;
+    chunkAmounts: number[];
+    proposedDates: string[];
+    confidenceScore: number;
+    suggestedTerms?: string;
+    explanation?: string;
+  } | null>(null);
+  const [paymentSuggestionLoading, setPaymentSuggestionLoading] = useState(false);
+  const [pdfLoadingId, setPdfLoadingId] = useState<string | null>(null);
+  const [form, setForm] = useState({
+    number: '',
+    linkCrm: true,
+    clientId: '',
+    clientName: '',
+    clientEmail: '',
+    date: new Date().toISOString().slice(0, 10),
+    dueDate: '',
+    total: '',
+    status: 'Sent' as Invoice['status'],
+  });
+
+  const invStatusOptions = useMemo(
+    () =>
+      (['Draft', 'Sent', 'Paid', 'Overdue'] as const).map((s) => ({
+        value: s,
+        label: invoiceStatusLabel(s, lang),
+      })),
+    [lang],
+  );
+
+  const clientSelectOptions = useMemo(() => {
+    const opts = [{ value: '', label: t('page.invoices.pickClient', lang) }];
+    const ids = new Set(crmClients.map((c) => c.id));
+    crmClients.forEach((c) => {
+      opts.push({
+        value: c.id,
+        label: `${c.name}${c.company ? ` — ${c.company}` : ''}`,
+      });
+    });
+    if (form.clientId && !ids.has(form.clientId)) {
+      opts.push({
+        value: form.clientId,
+        label: `${form.clientName || form.clientId} ${t('page.invoices.clientOrphanOption', lang)}`,
+      });
+    }
+    return opts;
+  }, [crmClients, lang, form.clientId, form.clientName]);
+
+  const loadAll = async () => {
+    setLoading(true);
+    setErr('');
+    try {
+      const [invRows, clientRows] = await Promise.all([
+        RealAPI.getInvoices(),
+        RealAPI.getClients(),
+      ]);
+      setData(invRows.map(invoiceFromBackend));
+      setCrmClients(clientRows.map(clientFromBackend));
+    } catch (e) {
+      setErr(getErrorMessage(e).message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    void loadAll();
+  }, [user.activeCompanyId, user.companyId]);
+
+  const resetIntake = () => {
+    setIntakeLoading(false);
+    setIntakeApplying(false);
+    setIntakeSourceText('');
+    setIntakeDocumentType('auto');
+    setIntakeResult(null);
+  };
+
+  const closeIntake = () => {
+    if (intakeLoading || intakeApplying) return;
+    setIntakeOpen(false);
+    resetIntake();
+  };
+
+  const openNew = () => {
+    const due = new Date(Date.now() + 7 * 86400000).toISOString().slice(0, 10);
+    setEditingId(null);
+    setForm({
+      number: `INV-${String(Date.now()).slice(-6)}`,
+      linkCrm: true,
+      clientId: '',
+      clientName: '',
+      clientEmail: '',
+      date: new Date().toISOString().slice(0, 10),
+      dueDate: due,
+      total: '',
+      status: 'Sent',
+    });
+    setModalOpen(true);
+  };
+
+  const openEdit = (inv: Invoice) => {
+    setEditingId(inv.id);
+    setForm({
+      number: inv.number,
+      linkCrm: !!inv.clientId,
+      clientId: inv.clientId || '',
+      clientName: inv.clientName,
+      clientEmail: inv.clientEmail || '',
+      date: inv.date,
+      dueDate: inv.dueDate,
+      total: String(inv.total),
+      status: inv.status,
+    });
+    setModalOpen(true);
+  };
+
+  const analyzeSmartIntake = async () => {
+    if (!intakeSourceText.trim()) {
+      setErr(lang === 'fr' ? 'Collez le texte du document avant de lancer l’analyse.' : 'Paste the document text before running AI intake.');
+      return;
+    }
+
+    setErr('');
+    setSuccess('');
+    setIntakeLoading(true);
+    try {
+      const result = await RealAPI.smartDocumentIntake({
+        sourceText: intakeSourceText,
+        documentType: intakeDocumentType,
+      });
+      setIntakeResult(result);
+    } catch (e) {
+      setErr(getErrorMessage(e).message);
+      setIntakeResult(null);
+    } finally {
+      setIntakeLoading(false);
+    }
+  };
+
+  const createInvoiceDraftFromIntake = async () => {
+    if (!intakeResult?.invoiceDraft) return;
+    setIntakeApplying(true);
+    setErr('');
+    setSuccess('');
+    try {
+      const row = await RealAPI.createInvoice({
+        number: intakeResult.invoiceDraft.number,
+        clientName: intakeResult.invoiceDraft.clientName,
+        clientEmail: intakeResult.invoiceDraft.clientEmail,
+        date: intakeResult.invoiceDraft.date,
+        dueDate: intakeResult.invoiceDraft.dueDate,
+        total: intakeResult.invoiceDraft.total,
+        status: 'Draft',
+        lineItems: intakeResult.invoiceDraft.lineItems.map((line, index) => ({
+          productKey: `AI-LINE-${index + 1}`,
+          notes: line.description,
+          quantity: line.quantity,
+          cost: line.unitPrice,
+        })),
+      });
+      setData((prev) => [invoiceFromBackend(row), ...prev]);
+      notifyFinopsDataChanged();
+      setSuccess(
+        lang === 'fr'
+          ? `Le brouillon ${row.number} a été créé depuis l’analyse IA.`
+          : `Draft invoice ${row.number} was created from the AI intake.`,
+      );
+      setIntakeOpen(false);
+      resetIntake();
+    } catch (e) {
+      setErr(getErrorMessage(e).message);
+    } finally {
+      setIntakeApplying(false);
+    }
+  };
+
+  const createExpenseFromIntake = async () => {
+    if (!intakeResult?.expenseDraft) return;
+    setIntakeApplying(true);
+    setErr('');
+    setSuccess('');
+    try {
+      await RealAPI.createExpense({
+        amount: intakeResult.expenseDraft.amount,
+        expenseDate: intakeResult.expenseDraft.expenseDate,
+        category: intakeResult.expenseDraft.category,
+        vendor: intakeResult.expenseDraft.vendor,
+        notes: intakeResult.expenseDraft.notes,
+      });
+      notifyFinopsDataChanged();
+      setSuccess(
+        lang === 'fr'
+          ? 'La dépense a été créée depuis l’analyse IA.'
+          : 'Expense entry was created from the AI intake.',
+      );
+      setIntakeOpen(false);
+      resetIntake();
+    } catch (e) {
+      setErr(getErrorMessage(e).message);
+    } finally {
+      setIntakeApplying(false);
+    }
+  };
+
+  const submitInvoice = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const total = parseFloat(form.total.replace(',', '.'));
+    if (!Number.isFinite(total) || total <= 0) {
+      setErr(t('page.invoices.errTotal', lang));
+      return;
+    }
+    if (form.linkCrm && !form.clientId) {
+      setErr(t('page.invoices.errClient', lang));
+      return;
+    }
+    if (!form.linkCrm && !form.clientName.trim()) {
+      setErr(t('page.invoices.errClient', lang));
+      return;
+    }
+    setSaving(true);
+    setErr('');
+    try {
+      if (editingId) {
+        const payload: Parameters<typeof RealAPI.updateInvoice>[1] = {
+          number: form.number.trim(),
+          date: form.date,
+          dueDate: form.dueDate,
+          total,
+          status: form.status,
+        };
+        if (form.linkCrm && form.clientId) {
+          payload.clientId = form.clientId;
+        } else {
+          payload.clientId = null;
+          payload.clientName = form.clientName.trim();
+          payload.clientEmail = form.clientEmail.trim() || undefined;
+        }
+        const row = await RealAPI.updateInvoice(editingId, payload);
+        setData((prev) => prev.map((x) => (x.id === editingId ? invoiceFromBackend(row) : x)));
+      } else {
+        if (form.linkCrm && form.clientId) {
+          const row = await RealAPI.createInvoice({
+            number: form.number.trim(),
+            clientId: form.clientId,
+            date: form.date,
+            dueDate: form.dueDate,
+            total,
+            status: form.status,
+          });
+          setData((prev) => [invoiceFromBackend(row), ...prev]);
+        } else {
+          const row = await RealAPI.createInvoice({
+            number: form.number.trim(),
+            clientName: form.clientName.trim(),
+            clientEmail: form.clientEmail.trim() || undefined,
+            date: form.date,
+            dueDate: form.dueDate,
+            total,
+            status: form.status,
+          });
+          setData((prev) => [invoiceFromBackend(row), ...prev]);
+        }
+      }
+      notifyFinopsDataChanged();
+      setModalOpen(false);
+    } catch (e) {
+      setErr(getErrorMessage(e).message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleMarkPaid = async (id: string) => {
+    setErr('');
+    try {
+      const row = await RealAPI.payInvoice(id);
+      setData((prev) => prev.map((x) => (x.id === id ? invoiceFromBackend(row) : x)));
+      notifyFinopsDataChanged();
+    } catch (e) {
+      setErr(getErrorMessage(e).message);
+    }
+  };
+
+  const handleDelete = async (id: string) => {
+    if (!window.confirm(t('page.invoices.deleteConfirm', lang))) return;
+    setErr('');
+    try {
+      await RealAPI.deleteInvoice(id);
+      setData((prev) => prev.filter((x) => x.id !== id));
+      notifyFinopsDataChanged();
+    } catch (e) {
+      setErr(getErrorMessage(e).message);
+    }
+  };
+
+  const handleExportPdf = async (inv: Invoice) => {
+    console.log('handleExportPdf called for invoice:', inv.id);
+    setErr('');
+    setPdfLoadingId(inv.id);
+    try {
+      console.log('Calling downloadInvoicePdf for invoice:', inv.id);
+      const blob = await RealAPI.downloadInvoicePdf(inv.id);
+      console.log('PDF blob received, size:', blob.size, 'type:', blob.type);
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `invoice-${inv.number.replace(/[^\\w.-]+/g, '_')}.pdf`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+      console.log('PDF downloaded successfully');
+    } catch (e) {
+      console.error('Error downloading PDF:', e);
+      setErr(getErrorMessage(e).message);
+    } finally {
+      setPdfLoadingId(null);
+    }
+  };
+
+  const handlePaymentSuggestion = async (inv: Invoice) => {
+    console.log('handlePaymentSuggestion called for invoice:', inv.id);
+    setErr('');
+    setPaymentSuggestionOpen(true);
+    setPaymentSuggestionInvoice(inv);
+    setPaymentSuggestionData(null);
+    setPaymentSuggestionLoading(true);
+    try {
+      console.log('Calling getInvoicePaymentSuggestion for invoice:', inv.id);
+      const result = await RealAPI.getInvoicePaymentSuggestion(inv.id);
+      console.log('Payment suggestion result:', result);
+      setPaymentSuggestionData(result);
+    } catch (e) {
+      console.error('Error getting payment suggestion:', e);
+      setPaymentSuggestionOpen(false);
+      setErr(getErrorMessage(e).message);
+    } finally {
+      setPaymentSuggestionLoading(false);
+    }
+  };
+
+  return (
+    <div className="space-y-6">
+      <PageHeader
+        title={t('page.invoices.title', lang)}
+        description={t('page.invoices.desc', lang)}
+        actions={
+          <div className="flex flex-wrap gap-2">
+            <PrimaryButton onClick={() => setIntakeOpen(true)} variant="outline" className="px-5 py-2.5 text-sm">
+              <BrainCircuit size={16} /> {lang === 'fr' ? 'IA intake' : 'AI intake'}
+            </PrimaryButton>
+            <PrimaryButton onClick={openNew} className="px-5 py-2.5 text-sm">
+              <Plus size={16} /> {t('page.invoices.new', lang)}
+            </PrimaryButton>
+          </div>
+        }
+      />
+      {err && <ErrorAlert message={err} onDismiss={() => setErr('')} />}
+      {success && <SuccessAlert message={success} onDismiss={() => setSuccess('')} />}
+      <Card className="overflow-hidden">
+        {loading ? (
+          <div className="p-20 flex justify-center">
+            <Loader2 className="animate-spin text-primary-600" />
+          </div>
+        ) : data.length === 0 ? (
+          <EmptyState
+            icon={<FileText size={32} />}
+            title={t('page.invoices.title', lang)}
+            description={t('page.invoices.desc', lang)}
+            action={
+              <PrimaryButton onClick={openNew} className="px-4 py-2 text-sm">
+                <Plus size={16} /> {t('page.invoices.new', lang)}
+              </PrimaryButton>
+            }
+          />
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-left min-w-[720px]">
+              <thead className="bg-gray-50 dark:bg-gray-800/50 border-b border-gray-100 dark:border-gray-800">
+                <tr>
+                  <th className="px-6 py-3.5 text-xs font-semibold text-gray-500 uppercase tracking-wider">{t('page.invoices.document', lang)}</th>
+                  <th className="px-6 py-3.5 text-xs font-semibold text-gray-500 uppercase tracking-wider">{t('page.invoices.client', lang)}</th>
+                  <th className="px-6 py-3.5 text-xs font-semibold text-gray-500 uppercase tracking-wider text-right">{t('page.invoices.amount', lang)}</th>
+                  <th className="px-6 py-3.5 text-xs font-semibold text-gray-500 uppercase tracking-wider text-right">{t('page.invoices.status', lang)}</th>
+                  <th className="px-6 py-3.5 text-xs font-semibold text-gray-500 uppercase tracking-wider text-right">{t('page.invoices.actions', lang)}</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-100 dark:divide-gray-800">
+                {data.map((inv) => (
+                  <tr key={inv.id} className="hover:bg-gray-50/50 dark:hover:bg-gray-800/30 transition-colors">
+                    <td className="px-6 py-4">
+                      <p className="font-semibold text-primary-600 text-sm">{inv.number}</p>
+                      <p className="text-xs text-gray-400 mt-0.5">{inv.date}</p>
+                    </td>
+                    <td className="px-6 py-4">
+                      <p className="font-medium text-sm text-gray-700 dark:text-gray-300">{inv.clientName}</p>
+                      {inv.clientEmail && <p className="text-xs text-gray-400 truncate max-w-[200px]">{inv.clientEmail}</p>}
+                    </td>
+                    <td className="px-6 py-4 text-right font-bold text-gray-900 dark:text-white">{inv.total.toLocaleString(localeForLang(lang))} €</td>
+                    <td className="px-6 py-4 text-right">
+                      <Badge
+                        variant={
+                          inv.status === 'Paid'
+                            ? 'success'
+                            : inv.status === 'Overdue'
+                              ? 'danger'
+                              : inv.status === 'Draft'
+                                ? 'default'
+                                : 'warning'
+                        }
+                      >
+                        {invoiceStatusLabel(inv.status, lang)}
+                      </Badge>
+                    </td>
+                    <td className="px-6 py-4 text-right">
+                      <div className="flex flex-wrap justify-end gap-1.5">
+                        {inv.status !== 'Paid' && (
+                          <PrimaryButton type="button" variant="outline" className="px-2 py-1 text-[11px]" onClick={() => void handleMarkPaid(inv.id)}>
+                            <CheckCircle2 size={12} /> {t('page.invoices.markPaid', lang)}
+                          </PrimaryButton>
+                        )}
+                        <PrimaryButton type="button" variant="outline" className="px-2 py-1 text-[11px]" onClick={() => void handleExportPdf(inv)} loading={pdfLoadingId === inv.id}>
+                          <Download size={12} /> {t('page.invoices.exportPdf', lang)}
+                        </PrimaryButton>
+                        <PrimaryButton type="button" variant="outline" className="px-2 py-1 text-[11px]" onClick={() => void handlePaymentSuggestion(inv)} loading={paymentSuggestionLoading && paymentSuggestionInvoice?.id === inv.id}>
+                          <BrainCircuit size={12} /> {t('page.invoices.paymentSuggestion', lang)}
+                        </PrimaryButton>
+                        <PrimaryButton type="button" variant="outline" className="px-2 py-1 text-[11px]" onClick={() => openEdit(inv)}>
+                          <Pencil size={12} /> {t('page.invoices.edit', lang)}
+                        </PrimaryButton>
+                        <PrimaryButton type="button" variant="outline" className="px-2 py-1 text-[11px] text-rose-600 border-rose-200" onClick={() => void handleDelete(inv.id)}>
+                          <Trash2 size={12} /> {t('page.invoices.delete', lang)}
+                        </PrimaryButton>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </Card>
+
+      {intakeOpen && (
+        <div
+          className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm"
+          role="dialog"
+          aria-modal="true"
+        >
+          <Card className="w-full max-w-5xl p-6 shadow-2xl max-h-[92vh] overflow-y-auto">
+            <div className="flex items-start justify-between gap-3 mb-5">
+              <div>
+                <h3 className="font-bold text-lg text-gray-900 dark:text-white">
+                  Smart Invoice / Receipt Intake
+                </h3>
+                <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
+                  {lang === 'fr'
+                    ? 'Collez le texte issu d’un PDF, d’un email, d’un OCR ou d’un reçu pour générer un brouillon.'
+                    : 'Paste text from a PDF, email, OCR export, or receipt to generate a draft.'}
+                </p>
+              </div>
+              <button
+                type="button"
+                className="p-1.5 rounded-lg text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors shrink-0"
+                onClick={closeIntake}
+                aria-label={t('page.invoices.cancel', lang)}
+              >
+                <X size={20} />
+              </button>
+            </div>
+
+            <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
+              <div className="space-y-4">
+                <SelectField
+                  label={lang === 'fr' ? 'Type de document' : 'Document type'}
+                  value={intakeDocumentType}
+                  onChange={(v) => setIntakeDocumentType(v as 'auto' | 'invoice' | 'receipt')}
+                  options={[
+                    { value: 'auto', label: lang === 'fr' ? 'Détection auto' : 'Auto detect' },
+                    { value: 'invoice', label: lang === 'fr' ? 'Facture' : 'Invoice' },
+                    { value: 'receipt', label: lang === 'fr' ? 'Reçu / dépense' : 'Receipt / expense' },
+                  ]}
+                />
+                <div className="space-y-1.5">
+                  <label className="block text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider">
+                    {lang === 'fr' ? 'Texte du document' : 'Document text'}
+                  </label>
+                  <textarea
+                    value={intakeSourceText}
+                    onChange={(e) => setIntakeSourceText(e.target.value)}
+                    placeholder={
+                      lang === 'fr'
+                        ? 'Exemple : ACME Corp, Invoice #1234, Bill To..., Total 1 250,00 EUR...'
+                        : 'Example: ACME Corp, Invoice #1234, Bill To..., Total 1,250.00 EUR...'
+                    }
+                    className="w-full min-h-[320px] px-4 py-3.5 rounded-xl bg-gray-50 dark:bg-gray-800/80 border border-gray-200 dark:border-gray-700 focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 outline-none font-medium text-gray-900 dark:text-white placeholder-gray-400 transition-all"
+                  />
+                </div>
+                <div className="flex gap-2">
+                  <PrimaryButton type="button" className="px-4 py-2.5 text-sm" onClick={() => void analyzeSmartIntake()} loading={intakeLoading}>
+                    <BrainCircuit size={16} /> {lang === 'fr' ? 'Analyser' : 'Analyze'}
+                  </PrimaryButton>
+                  <PrimaryButton type="button" variant="outline" className="px-4 py-2.5 text-sm" onClick={closeIntake} disabled={intakeLoading || intakeApplying}>
+                    {t('page.invoices.cancel', lang)}
+                  </PrimaryButton>
+                </div>
+              </div>
+
+              <div className="space-y-4">
+                {intakeResult ? (
+                  <>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Badge variant="info">{intakeResult.detectedType}</Badge>
+                      <Badge variant={intakeResult.confidenceScore >= 75 ? 'success' : intakeResult.confidenceScore >= 55 ? 'warning' : 'danger'}>
+                        {Math.round(intakeResult.confidenceScore)}% {lang === 'fr' ? 'confiance' : 'confidence'}
+                      </Badge>
+                    </div>
+
+                    <Card className="p-4">
+                      <p className="text-sm font-semibold text-gray-900 dark:text-white mb-2">
+                        {lang === 'fr' ? 'Résumé IA' : 'AI summary'}
+                      </p>
+                      <p className="text-sm text-gray-600 dark:text-gray-300">{intakeResult.summary}</p>
+                    </Card>
+
+                    {intakeResult.warnings.length > 0 && (
+                      <Card className="p-4 border-amber-200 dark:border-amber-900/50 bg-amber-50/50 dark:bg-amber-950/20">
+                        <p className="text-sm font-semibold text-amber-900 dark:text-amber-100 mb-2">
+                          {lang === 'fr' ? 'Points à vérifier' : 'Review points'}
+                        </p>
+                        <ul className="space-y-2 text-sm text-amber-800 dark:text-amber-200">
+                          {intakeResult.warnings.map((warning, index) => (
+                            <li key={index}>- {warning}</li>
+                          ))}
+                        </ul>
+                      </Card>
+                    )}
+
+                    {intakeResult.invoiceDraft && (
+                      <Card className="p-4">
+                        <div className="flex items-center justify-between gap-3 mb-3">
+                          <p className="text-sm font-semibold text-gray-900 dark:text-white">
+                            {lang === 'fr' ? 'Brouillon de facture' : 'Invoice draft'}
+                          </p>
+                          {intakeResult.blockingFields.length > 0 && (
+                            <Badge variant="warning">{lang === 'fr' ? 'Vérification requise' : 'Needs review'}</Badge>
+                          )}
+                        </div>
+                        <div className="grid grid-cols-2 gap-3 text-sm">
+                          <div>
+                            <p className="text-gray-500 dark:text-gray-400">{lang === 'fr' ? 'Numéro' : 'Number'}</p>
+                            <p className="font-medium text-gray-900 dark:text-white">{intakeResult.invoiceDraft.number}</p>
+                          </div>
+                          <div>
+                            <p className="text-gray-500 dark:text-gray-400">{lang === 'fr' ? 'Client' : 'Client'}</p>
+                            <p className="font-medium text-gray-900 dark:text-white">{intakeResult.invoiceDraft.clientName || '—'}</p>
+                          </div>
+                          <div>
+                            <p className="text-gray-500 dark:text-gray-400">{lang === 'fr' ? 'Date' : 'Date'}</p>
+                            <p className="font-medium text-gray-900 dark:text-white">{intakeResult.invoiceDraft.date}</p>
+                          </div>
+                          <div>
+                            <p className="text-gray-500 dark:text-gray-400">{lang === 'fr' ? 'Échéance' : 'Due date'}</p>
+                            <p className="font-medium text-gray-900 dark:text-white">{intakeResult.invoiceDraft.dueDate}</p>
+                          </div>
+                          <div className="col-span-2">
+                            <p className="text-gray-500 dark:text-gray-400">{lang === 'fr' ? 'Total' : 'Total'}</p>
+                            <p className="font-semibold text-lg text-gray-900 dark:text-white">
+                              {intakeResult.invoiceDraft.total.toLocaleString(localeForLang(lang))} €
+                            </p>
+                          </div>
+                        </div>
+                        {intakeResult.invoiceDraft.lineItems.length > 0 && (
+                          <div className="mt-4 space-y-2">
+                            <p className="text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">
+                              {lang === 'fr' ? 'Lignes détectées' : 'Detected line items'}
+                            </p>
+                            {intakeResult.invoiceDraft.lineItems.slice(0, 3).map((line, index) => (
+                              <div key={index} className="rounded-xl bg-gray-50 dark:bg-gray-800/60 px-3 py-2 text-sm text-gray-700 dark:text-gray-200">
+                                <div className="flex items-center justify-between gap-3">
+                                  <span className="font-medium">{line.description}</span>
+                                  <span>{line.lineTotal.toLocaleString(localeForLang(lang))} €</span>
+                                </div>
+                                <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                                  {line.quantity} × {line.unitPrice.toLocaleString(localeForLang(lang))} €
+                                </p>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                        <div className="mt-4">
+                          <PrimaryButton
+                            type="button"
+                            className="w-full py-2.5 text-sm"
+                            onClick={() => void createInvoiceDraftFromIntake()}
+                            loading={intakeApplying}
+                            disabled={intakeResult.blockingFields.length > 0}
+                          >
+                            <FileText size={16} /> {lang === 'fr' ? 'Créer le brouillon de facture' : 'Create draft invoice'}
+                          </PrimaryButton>
+                        </div>
+                      </Card>
+                    )}
+
+                    {intakeResult.expenseDraft && (
+                      <Card className="p-4">
+                        <div className="flex items-center justify-between gap-3 mb-3">
+                          <p className="text-sm font-semibold text-gray-900 dark:text-white">
+                            {lang === 'fr' ? 'Brouillon de dépense' : 'Expense draft'}
+                          </p>
+                          <Badge variant="default">{intakeResult.expenseDraft.category}</Badge>
+                        </div>
+                        <div className="grid grid-cols-2 gap-3 text-sm">
+                          <div>
+                            <p className="text-gray-500 dark:text-gray-400">{lang === 'fr' ? 'Montant' : 'Amount'}</p>
+                            <p className="font-semibold text-lg text-gray-900 dark:text-white">
+                              {intakeResult.expenseDraft.amount.toLocaleString(localeForLang(lang))} €
+                            </p>
+                          </div>
+                          <div>
+                            <p className="text-gray-500 dark:text-gray-400">{lang === 'fr' ? 'Date' : 'Date'}</p>
+                            <p className="font-medium text-gray-900 dark:text-white">{intakeResult.expenseDraft.expenseDate}</p>
+                          </div>
+                          <div className="col-span-2">
+                            <p className="text-gray-500 dark:text-gray-400">{lang === 'fr' ? 'Fournisseur' : 'Vendor'}</p>
+                            <p className="font-medium text-gray-900 dark:text-white">{intakeResult.expenseDraft.vendor || '—'}</p>
+                          </div>
+                        </div>
+                        <div className="mt-4">
+                          <PrimaryButton
+                            type="button"
+                            className="w-full py-2.5 text-sm"
+                            onClick={() => void createExpenseFromIntake()}
+                            loading={intakeApplying}
+                            disabled={intakeResult.blockingFields.length > 0}
+                          >
+                            <Receipt size={16} /> {lang === 'fr' ? 'Créer la dépense' : 'Create expense entry'}
+                          </PrimaryButton>
+                        </div>
+                      </Card>
+                    )}
+
+                    {intakeResult.missingFields.length > 0 && (
+                      <Card className="p-4">
+                        <p className="text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400 mb-2">
+                          {lang === 'fr' ? 'Champs manquants ou inférés' : 'Missing or inferred fields'}
+                        </p>
+                        <div className="flex flex-wrap gap-2">
+                          {intakeResult.missingFields.map((field) => (
+                            <Badge key={field} variant={intakeResult.blockingFields.includes(field) ? 'danger' : 'warning'}>
+                              {field}
+                            </Badge>
+                          ))}
+                        </div>
+                      </Card>
+                    )}
+
+                    <Card className="p-4">
+                      <p className="text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400 mb-2">
+                        {lang === 'fr' ? 'Aperçu normalisé' : 'Normalized preview'}
+                      </p>
+                      <pre className="max-h-[180px] overflow-auto whitespace-pre-wrap text-xs text-gray-600 dark:text-gray-300">
+                        {intakeResult.normalizedTextPreview}
+                      </pre>
+                    </Card>
+                  </>
+                ) : (
+                  <div className="h-full min-h-[320px] flex items-center justify-center rounded-2xl border border-dashed border-gray-200 dark:border-gray-800 bg-gray-50/80 dark:bg-gray-900/40">
+                    <div className="text-center px-6">
+                      <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-2xl bg-primary-50 text-primary-600 dark:bg-primary-950/40">
+                        <BrainCircuit size={22} />
+                      </div>
+                      <p className="font-semibold text-gray-900 dark:text-white">
+                        {lang === 'fr' ? 'Le brouillon IA apparaîtra ici' : 'Your AI draft will appear here'}
+                      </p>
+                      <p className="mt-2 text-sm text-gray-500 dark:text-gray-400">
+                        {lang === 'fr'
+                          ? 'Lancez l’analyse pour extraire un brouillon de facture ou de dépense.'
+                          : 'Run the intake to extract an invoice or expense draft.'}
+                      </p>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          </Card>
+        </div>
+      )}
+
+      {paymentSuggestionOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+          <div className="w-full max-w-2xl rounded-[28px] bg-white dark:bg-gray-950 shadow-2xl overflow-hidden">
+            <div className="flex items-start justify-between gap-4 border-b border-gray-200 dark:border-gray-800 px-6 py-5">
+              <div>
+                <h3 className="text-lg font-semibold text-gray-900 dark:text-white">{t('page.invoices.suggestionTitle', lang)}</h3>
+                <p className="text-sm text-gray-500">{paymentSuggestionInvoice?.number}</p>
+              </div>
+              <button type="button" onClick={() => setPaymentSuggestionOpen(false)} className="rounded-full p-2 text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-800 dark:text-gray-400">
+                <X size={18} />
+              </button>
+            </div>
+            <div className="p-6 space-y-5">
+              {paymentSuggestionLoading ? (
+                <div className="py-16 flex justify-center">
+                  <Loader2 className="animate-spin text-primary-600" />
+                </div>
+              ) : paymentSuggestionData ? (
+                <div className="space-y-5">
+                  <div className="rounded-3xl bg-gray-50 dark:bg-gray-900/80 border border-gray-100 dark:border-gray-800 p-5">
+                    <p className="text-sm font-semibold text-gray-900 dark:text-white">{paymentSuggestionData.recommendationType}</p>
+                    {paymentSuggestionData.suggestedTerms ? (
+                      <p className="mt-2 text-sm text-gray-500 dark:text-gray-400">{paymentSuggestionData.suggestedTerms}</p>
+                    ) : null}
+                  </div>
+                  <div className="grid gap-4 md:grid-cols-2">
+                    <div className="rounded-3xl bg-gray-50 dark:bg-gray-900/80 border border-gray-100 dark:border-gray-800 p-5">
+                      <p className="text-xs uppercase tracking-wide text-gray-500">{t('page.invoices.paymentSuggestion', lang)}</p>
+                      <ul className="mt-3 space-y-2 text-sm text-gray-700 dark:text-gray-200">
+                        {paymentSuggestionData.chunkAmounts.map((amount, index) => (
+                          <li key={index} className="flex items-center justify-between gap-2">
+                            <span className="font-semibold">{index + 1}.</span>
+                            <span>{amount.toLocaleString(localeForLang(lang))} €</span>
+                            <span className="text-gray-400 dark:text-gray-500">{paymentSuggestionData.proposedDates[index]}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                    <div className="rounded-3xl bg-gray-50 dark:bg-gray-900/80 border border-gray-100 dark:border-gray-800 p-5">
+                      <p className="text-xs uppercase tracking-wide text-gray-500">{t('page.invoices.suggestionConfidence', lang)}</p>
+                      <p className="mt-3 text-2xl font-bold text-gray-900 dark:text-white">{Math.round(paymentSuggestionData.confidenceScore * 100)}%</p>
+                      {paymentSuggestionData.explanation ? (
+                        <p className="mt-4 text-sm text-gray-500 dark:text-gray-400">{paymentSuggestionData.explanation}</p>
+                      ) : null}
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <p className="text-sm text-gray-500">{t('page.invoices.suggestionPending', lang)}</p>
+              )}
+            </div>
+            <div className="flex justify-end gap-3 border-t border-gray-200 dark:border-gray-800 px-6 py-4">
+              <PrimaryButton type="button" variant="outline" onClick={() => setPaymentSuggestionOpen(false)}>
+                {t('page.invoices.close', lang)}
+              </PrimaryButton>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {modalOpen && (
+        <div
+          className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm"
+          role="dialog"
+          aria-modal="true"
+        >
+          <Card className="w-full max-w-lg p-6 shadow-2xl">
+            <div className="flex items-start justify-between gap-3 mb-4">
+              <h3 className="font-bold text-lg text-gray-900 dark:text-white">
+                {editingId ? t('page.invoices.modalEdit', lang) : t('page.invoices.modalNew', lang)}
+              </h3>
+              <button
+                type="button"
+                className="p-1.5 rounded-lg text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors shrink-0"
+                onClick={() => !saving && setModalOpen(false)}
+                aria-label={t('page.invoices.cancel', lang)}
+              >
+                <X size={20} />
+              </button>
+            </div>
+            <form noValidate onSubmit={(e) => void submitInvoice(e)} className="space-y-4">
+              <InputField label={t('page.invoices.numberLabel', lang)} value={form.number} onChange={(v) => setForm({ ...form, number: v })} required />
+              <label className="flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={form.linkCrm}
+                  onChange={(e) => setForm({ ...form, linkCrm: e.target.checked })}
+                  className="rounded border-gray-300"
+                />
+                {t('page.invoices.linkCrm', lang)}
+              </label>
+              {form.linkCrm ? (
+                <SelectField label={t('page.invoices.pickClient', lang)} value={form.clientId} onChange={(v) => setForm({ ...form, clientId: v })} options={clientSelectOptions} required />
+              ) : (
+                <>
+                  <InputField label={t('page.invoices.client', lang)} value={form.clientName} onChange={(v) => setForm({ ...form, clientName: v })} required />
+                  <InputField label={t('common.email', lang)} value={form.clientEmail} onChange={(v) => setForm({ ...form, clientEmail: v })} type="email" />
+                </>
+              )}
+              <div className="grid grid-cols-2 gap-3">
+                <InputField label={t('page.invoices.issueDate', lang)} value={form.date} onChange={(v) => setForm({ ...form, date: v })} type="date" required />
+                <InputField label={t('page.invoices.dueDate', lang)} value={form.dueDate} onChange={(v) => setForm({ ...form, dueDate: v })} type="date" required />
+              </div>
+              <InputField label={t('page.invoices.amount', lang)} value={form.total} onChange={(v) => setForm({ ...form, total: v })} required />
+              <SelectField label={t('page.invoices.status', lang)} value={form.status} onChange={(v) => setForm({ ...form, status: v as Invoice['status'] })} options={invStatusOptions} required />
+              <div className="flex gap-2 pt-2">
+                <PrimaryButton type="submit" loading={saving} className="flex-1 py-2.5 text-sm">
+                  {t('page.invoices.save', lang)}
+                </PrimaryButton>
+                <PrimaryButton type="button" variant="outline" className="py-2.5 text-sm" onClick={() => setModalOpen(false)} disabled={saving}>
+                  {t('page.invoices.cancel', lang)}
+                </PrimaryButton>
+              </div>
+            </form>
+          </Card>
+        </div>
+      )}
+    </div>
+  );
+};
+
+/* ================================================================
+   AI EXPENSE COMPONENTS
+   ================================================================ */
+
+const ExpenseForecastPanel: React.FC<{ lang: UiLang; companyId: string; onClose: () => void }> = ({ lang, companyId, onClose }) => {
+  const [forecast, setForecast] = useState<AiExpenseForecastResponse | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    const loadForecast = async () => {
+      setLoading(true);
+      setError('');
+      try {
+        const result = await RealAPI.getExpenseForecast({ companyId });
+        setForecast(result);
+      } catch (e) {
+        setError(getErrorMessage(e).message);
+      } finally {
+        setLoading(false);
+      }
+    };
+    void loadForecast();
+  }, [companyId]);
+
+  return (
+    <div
+      className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm"
+      role="dialog"
+      aria-modal="true"
+    >
+      <Card className="w-full max-w-2xl p-6 shadow-2xl max-h-[90vh] overflow-y-auto">
+        <div className="flex items-start justify-between gap-3 mb-6">
+          <div>
+            <h3 className="font-bold text-xl text-gray-900 dark:text-white">
+              {t('ai.expense.forecast.title', lang)}
+            </h3>
+            <p className="text-sm text-gray-500 mt-1">
+              Prévision des dépenses basée sur l'historique
+            </p>
+          </div>
+          <button
+            type="button"
+            className="p-1.5 rounded-lg text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors shrink-0"
+            onClick={onClose}
+            aria-label="Close"
+          >
+            <X size={20} />
+          </button>
+        </div>
+
+        {error && <ErrorAlert message={error} onDismiss={() => setError('')} />}
+
+        {loading ? (
+          <div className="flex justify-center py-12">
+            <Loader2 className="animate-spin text-primary-600" size={32} />
+            <span className="ml-3 text-gray-600">{t('ai.expense.forecast.loading', lang)}</span>
+          </div>
+        ) : forecast ? (
+          <div className="space-y-6">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <Card className="p-4">
+                <div className="text-center">
+                  <div className="text-2xl font-bold text-blue-600 mb-1">
+                    {forecast.predictedAmount.toLocaleString(localeForLang(lang))} €
+                  </div>
+                  <div className="text-sm text-gray-500">
+                    {t('ai.expense.forecast.predictedAmount', lang)}
+                  </div>
+                </div>
+              </Card>
+              <Card className="p-4">
+                <div className="text-center">
+                  <div className="text-2xl font-bold text-green-600 mb-1">
+                    {forecast.confidenceScore}%
+                  </div>
+                  <div className="text-sm text-gray-500">
+                    {t('ai.expense.forecast.confidence', lang)}
+                  </div>
+                </div>
+              </Card>
+              <Card className="p-4">
+                <div className="text-center">
+                  <div className="text-2xl font-bold text-purple-600 mb-1">
+                    {forecast.trend === 'increasing' ? '↗️' : forecast.trend === 'decreasing' ? '↘️' : '➡️'}
+                  </div>
+                  <div className="text-sm text-gray-500">
+                    {t('ai.expense.forecast.trend', lang)}
+                  </div>
+                  <div className="text-xs text-gray-400 mt-1">
+                    {t(`ai.expense.forecast.trend.${forecast.trend}`, lang)}
+                  </div>
+                </div>
+              </Card>
+            </div>
+
+            <Card className="p-4">
+              <h4 className="font-semibold text-gray-900 dark:text-white mb-2">
+                {t('ai.expense.forecast.explanation', lang)}
+              </h4>
+              <p className="text-sm text-gray-600 dark:text-gray-300">
+                {forecast.explanation}
+              </p>
+            </Card>
+          </div>
+        ) : (
+          <div className="text-center py-12">
+            <p className="text-gray-500">{t('ai.expense.forecast.unavailable', lang)}</p>
+          </div>
+        )}
+
+        <div className="flex justify-end mt-6">
+          <PrimaryButton onClick={onClose} variant="outline">
+            Fermer
+          </PrimaryButton>
+        </div>
+      </Card>
+    </div>
+  );
+};
+
+const ExpenseAlertsPanel: React.FC<{ lang: UiLang; companyId: string; onClose: () => void }> = ({ lang, companyId, onClose }) => {
+  const [alerts, setAlerts] = useState<AiExpenseAlertResponse[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    const loadAlerts = async () => {
+      setLoading(true);
+      setError('');
+      try {
+        const result = await RealAPI.getExpenseAlerts({ companyId });
+        setAlerts(result);
+      } catch (e) {
+        setError(getErrorMessage(e).message);
+      } finally {
+        setLoading(false);
+      }
+    };
+    void loadAlerts();
+  }, [companyId]);
+
+  const getAlertLevelColor = (level: string) => {
+    switch (level) {
+      case 'critical': return 'text-red-600 bg-red-50 border-red-200';
+      case 'high': return 'text-orange-600 bg-orange-50 border-orange-200';
+      case 'medium': return 'text-yellow-600 bg-yellow-50 border-yellow-200';
+      case 'low': return 'text-blue-600 bg-blue-50 border-blue-200';
+      default: return 'text-gray-600 bg-gray-50 border-gray-200';
+    }
+  };
+
+  return (
+    <div
+      className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm"
+      role="dialog"
+      aria-modal="true"
+    >
+      <Card className="w-full max-w-4xl p-6 shadow-2xl max-h-[90vh] overflow-y-auto">
+        <div className="flex items-start justify-between gap-3 mb-6">
+          <div>
+            <h3 className="font-bold text-xl text-gray-900 dark:text-white">
+              {t('ai.alerts.title', lang)}
+            </h3>
+            <p className="text-sm text-gray-500 mt-1">
+              Alertes sur les dépenses anormales détectées par IA
+            </p>
+          </div>
+          <button
+            type="button"
+            className="p-1.5 rounded-lg text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors shrink-0"
+            onClick={onClose}
+            aria-label="Close"
+          >
+            <X size={20} />
+          </button>
+        </div>
+
+        {error && <ErrorAlert message={error} onDismiss={() => setError('')} />}
+
+        {loading ? (
+          <div className="flex justify-center py-12">
+            <Loader2 className="animate-spin text-primary-600" size={32} />
+            <span className="ml-3 text-gray-600">{t('ai.alerts.loading', lang)}</span>
+          </div>
+        ) : alerts.length === 0 ? (
+          <div className="text-center py-12">
+            <div className="text-green-600 mb-4">
+              <CheckCircle2 size={48} className="mx-auto" />
+            </div>
+            <p className="text-gray-600">{t('ai.alerts.noAlerts', lang)}</p>
+          </div>
+        ) : (
+          <div className="space-y-4">
+            {alerts.map((alert) => (
+              <Card key={alert.expenseId} className={`p-4 border-l-4 ${getAlertLevelColor(alert.alertLevel)}`}>
+                <div className="flex items-start justify-between gap-4">
+                  <div className="flex-1">
+                    <div className="flex items-center gap-2 mb-2">
+                      <Badge variant={alert.alertLevel === 'critical' ? 'danger' : alert.alertLevel === 'high' ? 'warning' : 'default'}>
+                        {t(`ai.alerts.level.${alert.alertLevel}`, lang)}
+                      </Badge>
+                      <span className="text-sm text-gray-500">
+                        Score: {alert.riskScore}/100
+                      </span>
+                      <span className="text-sm font-medium text-gray-700 dark:text-gray-300">
+                        {alert.amount.toLocaleString(localeForLang(lang))} €
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-4 mb-3 text-xs text-gray-500">
+                      <span>📁 {alert.category}</span>
+                      {alert.vendor && <span>🏪 {alert.vendor}</span>}
+                      <span>📅 {new Date(alert.expenseDate).toLocaleDateString(localeForLang(lang))}</span>
+                    </div>
+                    <h4 className="font-semibold text-gray-900 dark:text-white mb-2">
+                      {t('ai.alerts.reason', lang)}
+                    </h4>
+                    <p className="text-sm text-gray-600 dark:text-gray-300 mb-3">
+                      {alert.reason}
+                    </p>
+                    <h4 className="font-semibold text-gray-900 dark:text-white mb-2">
+                      {t('ai.alerts.recommendation', lang)}
+                    </h4>
+                    <p className="text-sm text-gray-600 dark:text-gray-300">
+                      {alert.recommendation}
+                    </p>
+                  </div>
+                  <div className="text-xs text-gray-400">
+                    Détecté: {new Date(alert.detectedAt).toLocaleDateString(localeForLang(lang))}
+                  </div>
+                </div>
+              </Card>
+            ))}
+          </div>
+        )}
+
+        <div className="flex justify-end mt-6">
+          <PrimaryButton onClick={onClose} variant="outline">
+            Fermer
+          </PrimaryButton>
+        </div>
+      </Card>
+    </div>
+  );
+};
+
+/* ================================================================
+   ADMIN - EXPENSES
+   ================================================================ */
+
+const AdminExpensesView: React.FC<{ user: User; lang: UiLang }> = ({ user, lang }) => {
+  const [data, setData] = useState<Expense[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const [modalOpen, setModalOpen] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [forecastPanelOpen, setForecastPanelOpen] = useState(false);
+  const [alertsPanelOpen, setAlertsPanelOpen] = useState(false);
+  const [form, setForm] = useState({
+    amount: '',
+    expenseDate: new Date().toISOString().slice(0, 10),
+    category: 'auto',
+    vendor: '',
+    notes: '',
+  });
+
+  const mapBackendExpenseToUi = (exp: ExpenseBackend): Expense => ({
+    id: exp.id,
+    description: exp.vendor || exp.notes || t('page.expenses.title', lang),
+    category: exp.category,
+    amount: Number(exp.amount),
+    date: typeof exp.expenseDate === 'string' ? exp.expenseDate.slice(0, 10) : String(exp.expenseDate).slice(0, 10),
+    status: 'Approved',
+    reportedBy: exp.createdBy ? `${exp.createdBy.slice(0, 8)}…` : '—',
+    notes: exp.notes,
+    createdBy: exp.createdBy,
+  });
+
+  const categoryOptions = useMemo(
+    () => [
+      { value: 'auto', label: t('page.expenses.categoryAuto', lang) },
+      { value: 'Software', label: 'Software' },
+      { value: 'Travel', label: 'Travel' },
+      { value: 'Office', label: 'Office' },
+      { value: 'Marketing', label: 'Marketing' },
+      { value: 'Other', label: 'Other' },
+    ],
+    [lang],
+  );
+
+  const load = async () => {
+    setLoading(true);
+    setError('');
+    try {
+      const rows = await RealAPI.getExpenses();
+      setData(rows.map(mapBackendExpenseToUi));
+    } catch (e) {
+      setError(getErrorMessage(e).message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    void load();
+  }, [user.activeCompanyId, user.companyId]);
+
+  const openNew = () => {
+    setEditingId(null);
+    setForm({
+      amount: '',
+      expenseDate: new Date().toISOString().slice(0, 10),
+      category: 'auto',
+      vendor: '',
+      notes: '',
+    });
+    setModalOpen(true);
+  };
+
+  const openEdit = async (exp: Expense) => {
+    setError('');
+    try {
+      const raw = await RealAPI.getExpense(exp.id);
+      setEditingId(exp.id);
+      setForm({
+        amount: String(raw.amount),
+        expenseDate: (typeof raw.expenseDate === 'string' ? raw.expenseDate : String(raw.expenseDate)).slice(0, 10),
+        category: raw.category,
+        vendor: raw.vendor || '',
+        notes: raw.notes || '',
+      });
+      setModalOpen(true);
+    } catch (e) {
+      setError(getErrorMessage(e).message);
+    }
+  };
+
+  const submitExpense = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const amount = parseFloat(form.amount.replace(',', '.'));
+    if (!Number.isFinite(amount) || amount <= 0) {
+      setError(t('page.expenses.errAmount', lang));
+      return;
+    }
+    setSaving(true);
+    setError('');
+    try {
+      const payload = {
+        amount,
+        expenseDate: form.expenseDate,
+        category: form.category || 'auto',
+        vendor: form.vendor.trim() || undefined,
+        notes: form.notes.trim() || undefined,
+      };
+      if (editingId) {
+        const row = await RealAPI.updateExpense(editingId, payload);
+        setData((prev) => prev.map((x) => (x.id === editingId ? mapBackendExpenseToUi(row) : x)));
+      } else {
+        const row = await RealAPI.createExpense(payload);
+        setData((prev) => [mapBackendExpenseToUi(row), ...prev]);
+      }
+      notifyFinopsDataChanged();
+      setModalOpen(false);
+    } catch (e) {
+      setError(getErrorMessage(e).message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleDelete = async (id: string) => {
+    if (!window.confirm(t('page.expenses.deleteConfirm', lang))) return;
+    setError('');
+    try {
+      await RealAPI.deleteExpense(id);
+      setData((prev) => prev.filter((x) => x.id !== id));
+      notifyFinopsDataChanged();
+    } catch (e) {
+      setError(getErrorMessage(e).message);
+    }
+  };
+
+  return (
+    <div className="space-y-6">
+      <PageHeader
+        title={t('page.expenses.title', lang)}
+        description={t('page.expenses.desc', lang)}
+        actions={
+          <div className="flex gap-2">
+            <PrimaryButton onClick={() => setForecastPanelOpen(true)} variant="outline" className="px-4 py-2.5 text-sm">
+              <BrainCircuit size={16} /> {t('page.expenses.aiForecast', lang)}
+            </PrimaryButton>
+            <PrimaryButton onClick={() => setAlertsPanelOpen(true)} variant="outline" className="px-4 py-2.5 text-sm">
+              <AlertCircle size={16} /> {t('page.expenses.aiAlerts', lang)}
+            </PrimaryButton>
+            <PrimaryButton onClick={openNew} className="px-5 py-2.5 text-sm">
+              <Plus size={16} /> {t('page.expenses.add', lang)}
+            </PrimaryButton>
+          </div>
+        }
+      />
+      {error && <ErrorAlert message={error} onDismiss={() => setError('')} />}
+      {loading ? (
+        <div className="flex justify-center py-20">
+          <Loader2 className="animate-spin text-primary-600" size={32} />
+        </div>
+      ) : data.length === 0 ? (
+        <EmptyState
+          icon={<Receipt size={32} />}
+          title={t('page.expenses.title', lang)}
+          description={t('page.expenses.desc', lang)}
+          action={
+            <PrimaryButton onClick={openNew} className="px-4 py-2 text-sm">
+              <Plus size={16} /> {t('page.expenses.add', lang)}
+            </PrimaryButton>
+          }
+        />
+      ) : (
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+          {data.map((exp) => (
+            <Card key={exp.id} className="p-6">
+              <div className="flex items-center justify-between mb-4">
+                <div className="p-2.5 bg-rose-50 dark:bg-rose-900/20 rounded-xl text-rose-500">
+                  <Receipt size={20} />
+                </div>
+                <Badge>{exp.category}</Badge>
+              </div>
+              <h3 className="font-bold text-gray-900 dark:text-white mb-1">{exp.description}</h3>
+              <p className="text-xs text-gray-500 mb-4">
+                {exp.reportedBy} • {exp.date}
+              </p>
+              {exp.notes && <p className="text-xs text-gray-400 mb-3 line-clamp-2">{exp.notes}</p>}
+              <div className="pt-4 border-t border-gray-100 dark:border-gray-800 flex justify-between items-center mb-3">
+                <span className="text-xl font-bold text-rose-500">-{exp.amount.toLocaleString(localeForLang(lang))} €</span>
+                <Badge variant="success">{exp.status}</Badge>
+              </div>
+              <div className="flex flex-wrap gap-1.5">
+                <PrimaryButton type="button" variant="outline" className="px-2 py-1 text-[11px] flex-1" onClick={() => void openEdit(exp)}>
+                  <Pencil size={12} /> {t('page.expenses.edit', lang)}
+                </PrimaryButton>
+                <PrimaryButton
+                  type="button"
+                  variant="outline"
+                  className="px-2 py-1 text-[11px] flex-1 text-rose-600 border-rose-200"
+                  onClick={() => void handleDelete(exp.id)}
+                >
+                  <Trash2 size={12} /> {t('page.expenses.delete', lang)}
+                </PrimaryButton>
+              </div>
+            </Card>
+          ))}
+        </div>
+      )}
+
+      {modalOpen && (
+        <div
+          className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm"
+          role="dialog"
+          aria-modal="true"
+        >
+          <Card className="w-full max-w-md p-6 shadow-2xl">
+            <div className="flex items-start justify-between gap-3 mb-4">
+              <h3 className="font-bold text-lg text-gray-900 dark:text-white">
+                {editingId ? t('page.expenses.modalEdit', lang) : t('page.expenses.modalNew', lang)}
+              </h3>
+              <button
+                type="button"
+                className="p-1.5 rounded-lg text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors shrink-0"
+                onClick={() => !saving && setModalOpen(false)}
+                aria-label={t('page.invoices.cancel', lang)}
+              >
+                <X size={20} />
+              </button>
+            </div>
+            <form noValidate onSubmit={(e) => void submitExpense(e)} className="space-y-4">
+              <InputField label={t('page.invoices.amount', lang)} value={form.amount} onChange={(v) => setForm({ ...form, amount: v })} required />
+              <InputField label={t('page.invoices.issueDate', lang)} value={form.expenseDate} onChange={(v) => setForm({ ...form, expenseDate: v })} type="date" required />
+              <SelectField label={t('page.expenses.categoryField', lang)} value={form.category} onChange={(v) => setForm({ ...form, category: v })} options={categoryOptions} required />
+              <InputField label={t('page.expenses.vendor', lang)} value={form.vendor} onChange={(v) => setForm({ ...form, vendor: v })} />
+              <InputField label={t('page.expenses.notes', lang)} value={form.notes} onChange={(v) => setForm({ ...form, notes: v })} />
+              <div className="flex gap-2 pt-2">
+                <PrimaryButton type="submit" loading={saving} className="flex-1 py-2.5 text-sm">
+                  {t('page.invoices.save', lang)}
+                </PrimaryButton>
+                <PrimaryButton type="button" variant="outline" className="py-2.5 text-sm" onClick={() => setModalOpen(false)} disabled={saving}>
+                  {t('page.invoices.cancel', lang)}
+                </PrimaryButton>
+              </div>
+            </form>
+          </Card>
+        </div>
+      )}
+
+      {/* AI Forecast Panel */}
+      {forecastPanelOpen && (
+        <ExpenseForecastPanel
+          lang={lang}
+          companyId={user.activeCompanyId || user.companyId!}
+          onClose={() => setForecastPanelOpen(false)}
+        />
+      )}
+
+      {/* AI Alerts Panel */}
+      {alertsPanelOpen && (
+        <ExpenseAlertsPanel
+          lang={lang}
+          companyId={user.activeCompanyId || user.companyId!}
+          onClose={() => setAlertsPanelOpen(false)}
+        />
+      )}
+    </div>
+  );
+};
+
+/* ================================================================
+   ADMIN - CLIENTS
+   ================================================================ */
+
+const AdminClientsView: React.FC<{ user: User; lang: UiLang }> = ({ user, lang }) => {
+  const [data, setData] = useState<Client[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [err, setErr] = useState('');
+  const [modalOpen, setModalOpen] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [form, setForm] = useState({ name: '', email: '', phone: '', companyName: '' });
+
+  const canDeleteClients = user.role !== UserRole.TEAM_MEMBER;
+
+  const load = async () => {
+    setLoading(true);
+    setErr('');
+    try {
+      const rows = await RealAPI.getClients();
+      setData(rows.map(clientFromBackend));
+    } catch (e) {
+      setErr(getErrorMessage(e).message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    void load();
+  }, [user.activeCompanyId, user.companyId]);
+
+  const openNew = () => {
+    setEditingId(null);
+    setForm({ name: '', email: '', phone: '', companyName: '' });
+    setModalOpen(true);
+  };
+
+  const openEdit = (c: Client) => {
+    setEditingId(c.id);
+    setForm({
+      name: c.name,
+      email: c.email || '',
+      phone: c.phone || '',
+      companyName: c.company || '',
+    });
+    setModalOpen(true);
+  };
+
+  const submitClient = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!form.name.trim() || form.name.trim().length < 2) {
+      setErr(t('page.clients.nameMin', lang));
+      return;
+    }
+    setSaving(true);
+    setErr('');
+    try {
+      const payload = {
+        name: form.name.trim(),
+        email: form.email.trim() || undefined,
+        phone: form.phone.trim() || undefined,
+        companyName: form.companyName.trim() || undefined,
+      };
+      if (editingId) {
+        const row = await RealAPI.updateClient(editingId, payload);
+        setData((prev) => prev.map((x) => (x.id === editingId ? clientFromBackend(row) : x)));
+      } else {
+        const row = await RealAPI.createClient(payload);
+        setData((prev) => [clientFromBackend(row), ...prev]);
+      }
+      notifyFinopsDataChanged();
+      setModalOpen(false);
+    } catch (e) {
+      setErr(getErrorMessage(e).message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleDelete = async (id: string) => {
+    if (!canDeleteClients) return;
+    if (!window.confirm(t('page.clients.deleteConfirm', lang))) return;
+    setErr('');
+    try {
+      await RealAPI.deleteClient(id);
+      setData((prev) => prev.filter((x) => x.id !== id));
+      notifyFinopsDataChanged();
+    } catch (e) {
+      setErr(getErrorMessage(e).message);
+    }
+  };
+
+  return (
+    <div className="space-y-6">
+      <PageHeader
+        title={t('page.clients.title', lang)}
+        description={t('page.clients.desc', lang)}
+        actions={
+          <PrimaryButton onClick={openNew} className="px-5 py-2.5 text-sm">
+            <UserPlus size={16} /> {t('page.clients.add', lang)}
+          </PrimaryButton>
+        }
+      />
+      {err && <ErrorAlert message={err} onDismiss={() => setErr('')} />}
+      {loading ? (
+        <div className="flex justify-center py-20">
+          <Loader2 className="animate-spin text-primary-600" size={32} />
+        </div>
+      ) : data.length === 0 ? (
+        <EmptyState
+          icon={<Users size={32} />}
+          title={t('page.clients.title', lang)}
+          description={t('page.clients.desc', lang)}
+          action={
+            <PrimaryButton onClick={openNew} className="px-4 py-2 text-sm">
+              <UserPlus size={16} /> {t('page.clients.add', lang)}
+            </PrimaryButton>
+          }
+        />
+      ) : (
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+          {data.map((c) => (
+            <Card key={c.id} className="p-6">
+              <div className="flex items-start gap-4">
+                <div className="w-12 h-12 bg-primary-50 dark:bg-primary-900/20 rounded-xl flex items-center justify-center text-primary-600 font-bold text-lg shrink-0">
+                  {(c.company || c.name).charAt(0)}
+                </div>
+                <div className="min-w-0 flex-1">
+                  <h3 className="font-bold text-gray-900 dark:text-white truncate">{c.company || c.name}</h3>
+                  <p className="text-sm text-gray-500 truncate">{c.name}</p>
+                  <p className="text-xs text-gray-400 mt-1 truncate">{c.email || '—'}</p>
+                  {c.phone && <p className="text-xs text-gray-400 mt-0.5">{c.phone}</p>}
+                </div>
+              </div>
+              <div className="mt-4 pt-4 border-t border-gray-100 dark:border-gray-800 flex flex-wrap gap-1.5">
+                <PrimaryButton type="button" variant="outline" className="px-2 py-1 text-[11px] flex-1" onClick={() => openEdit(c)}>
+                  <Pencil size={12} /> {t('page.clients.edit', lang)}
+                </PrimaryButton>
+                {canDeleteClients && (
+                  <PrimaryButton
+                    type="button"
+                    variant="outline"
+                    className="px-2 py-1 text-[11px] flex-1 text-rose-600 border-rose-200"
+                    onClick={() => void handleDelete(c.id)}
+                  >
+                    <Trash2 size={12} /> {t('page.clients.delete', lang)}
+                  </PrimaryButton>
+                )}
+              </div>
+            </Card>
+          ))}
+        </div>
+      )}
+
+      {modalOpen && (
+        <div
+          className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm"
+          role="dialog"
+          aria-modal="true"
+        >
+          <Card className="w-full max-w-md p-6 shadow-2xl">
+            <div className="flex items-start justify-between gap-3 mb-4">
+              <h3 className="font-bold text-lg text-gray-900 dark:text-white">
+                {editingId ? t('page.clients.modalEdit', lang) : t('page.clients.modalNew', lang)}
+              </h3>
+              <button
+                type="button"
+                className="p-1.5 rounded-lg text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors shrink-0"
+                onClick={() => !saving && setModalOpen(false)}
+                aria-label={t('page.invoices.cancel', lang)}
+              >
+                <X size={20} />
+              </button>
+            </div>
+            <form noValidate onSubmit={(e) => void submitClient(e)} className="space-y-4">
+              <InputField label={t('emp.fullName', lang)} value={form.name} onChange={(v) => setForm({ ...form, name: v })} required />
+              <InputField label={t('common.email', lang)} value={form.email} onChange={(v) => setForm({ ...form, email: v })} type="email" />
+              <InputField label={t('page.clients.phone', lang)} value={form.phone} onChange={(v) => setForm({ ...form, phone: v })} />
+              <InputField label={t('page.clients.companyLabel', lang)} value={form.companyName} onChange={(v) => setForm({ ...form, companyName: v })} />
+              <div className="flex gap-2 pt-2">
+                <PrimaryButton type="submit" loading={saving} className="flex-1 py-2.5 text-sm">
+                  {t('page.invoices.save', lang)}
+                </PrimaryButton>
+                <PrimaryButton type="button" variant="outline" className="py-2.5 text-sm" onClick={() => setModalOpen(false)} disabled={saving}>
+                  {t('page.invoices.cancel', lang)}
+                </PrimaryButton>
+              </div>
+            </form>
+          </Card>
+        </div>
+      )}
+    </div>
+  );
+};
+
+/* ================================================================
+   ADMIN - ANALYTICS
+   ================================================================ */
+
+const AdminAnalyticsView: React.FC<{ lang: UiLang }> = ({ lang }) => (
+  <div className="space-y-6">
+    <PageHeader title={t('page.analytics.title', lang)} description={t('page.analytics.desc', lang)} />
+    <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+      <Card className="lg:col-span-2 p-6">
+        <h2 className="font-bold text-gray-900 dark:text-white mb-6">{t('page.analytics.revenueVsExpenses', lang)}</h2>
+        <div className="h-[360px]">
+          <ResponsiveContainer width="100%" height="100%">
+            <AreaChart data={REVENUE_DATA}>
+              <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#374151" opacity={0.08} />
+              <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fontSize: 12, fontWeight: 600 }} dy={10} />
+              <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 12, fontWeight: 600 }} />
+              <Tooltip contentStyle={{ borderRadius: '12px', background: '#111827', border: 'none', color: '#fff', fontSize: '13px', padding: '12px 16px' }} />
+              <Area type="monotone" dataKey="revenue" stroke="#2563eb" strokeWidth={3} fillOpacity={0.08} fill="#2563eb" />
+              <Area type="monotone" dataKey="expenses" stroke="#f43f5e" strokeWidth={3} fillOpacity={0.08} fill="#f43f5e" />
+            </AreaChart>
+          </ResponsiveContainer>
+        </div>
+      </Card>
+      <div className="space-y-6">
+        <Card className="p-6">
+          <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">{t('page.analytics.cashEfficiency', lang)}</p>
+          <p className="text-3xl font-bold text-gray-900 dark:text-white mb-3">82.4%</p>
+          <div className="w-full bg-gray-100 dark:bg-gray-800 h-2 rounded-full overflow-hidden">
+            <div className="w-[82.4%] h-full bg-emerald-500 rounded-full transition-all"></div>
+          </div>
+          <p className="mt-3 text-xs text-gray-500 font-medium">{t('page.analytics.vsPrevQuarter', lang)}</p>
+        </Card>
+        <div className="bg-gradient-to-br from-primary-600 to-primary-700 p-6 rounded-2xl text-white shadow-lg shadow-primary-600/15">
+          <BarChart3 size={24} className="mb-4 opacity-80" />
+          <h3 className="font-bold mb-1">{t('page.analytics.autoForecast', lang)}</h3>
+          <p className="text-primary-100 text-sm leading-relaxed">{t('page.analytics.autoForecastBody', lang)}</p>
+        </div>
+      </div>
+    </div>
+  </div>
+);
+
+/* ================================================================
+   ADMIN - AUDIT LOG
+   ================================================================ */
+
+const AdminAuditLogView: React.FC<{ lang: UiLang }> = ({ lang }) => {
+  const [logs, setLogs] = useState<AuditLog[]>([]);
+  const [err, setErr] = useState('');
+  useEffect(() => {
+    void (async () => {
+      try {
+        const rows = await RealAPI.getActivityLogs();
+        setLogs(rows.map(auditFromBackend));
+      } catch (e) {
+        setErr(getErrorMessage(e).message);
+      }
+    })();
+  }, []);
+
+  return (
+    <div className="space-y-6">
+      <PageHeader title={t('page.audit.title', lang)} description={t('page.audit.desc', lang)} />
+      {err && <ErrorAlert message={err} onDismiss={() => setErr('')} />}
+      <Card className="divide-y divide-gray-100 dark:divide-gray-800 overflow-hidden">
+        {logs.map(log => (
+          <div key={log.id} className="px-6 py-4 flex items-center gap-4 hover:bg-gray-50/50 dark:hover:bg-gray-800/30 transition-colors">
+            <div className="p-2.5 bg-gray-100 dark:bg-gray-800 rounded-xl text-gray-400"><History size={18} /></div>
+            <div className="flex-1 min-w-0">
+              <p className="font-semibold text-sm text-gray-900 dark:text-white truncate">{log.action}</p>
+              <p className="text-xs text-gray-400 mt-0.5">{t('page.audit.by', lang)} {log.user} • {log.entity}</p>
+            </div>
+            <div className="text-right shrink-0">
+              <p className="text-sm font-semibold text-primary-600">{new Date(log.timestamp).toLocaleTimeString(localeForLang(lang))}</p>
+              <p className="text-[11px] text-gray-400">{new Date(log.timestamp).toLocaleDateString(localeForLang(lang))}</p>
+            </div>
+          </div>
+        ))}
+      </Card>
+    </div>
+  );
+};
+
+/* ================================================================
+   ADMIN - USERS
+   ================================================================ */
+
+const AdminUsersView: React.FC<{ user: User; lang: UiLang }> = ({ user, lang }) => {
+  const canAccessStats = user.role === UserRole.PLATFORM_ADMIN;
+  const canManageUserSecurity =
+    user.role === UserRole.PLATFORM_ADMIN ||
+    user.role === UserRole.BUSINESS_OWNER;
+  const [filters, setFilters] = useState<{
+    search: string;
+    role: '' | UserRoleBackend;
+    locked: 'all' | 'locked' | 'unlocked';
+    verified: 'all' | 'verified' | 'unverified';
+    sortBy: 'createdAt' | 'name' | 'email' | 'lastLoginAt' | 'role';
+    sortOrder: 'asc' | 'desc';
+    page: number;
+    limit: number;
+  }>({
+    search: '',
+    role: '',
+    locked: 'all',
+    verified: 'all',
+    sortBy: 'createdAt',
+    sortOrder: 'desc',
+    page: 1,
+    limit: 10,
+  });
+  const [rows, setRows] = useState<UserListItemBackend[]>([]);
+  const [meta, setMeta] = useState({ page: 1, limit: 10, total: 0, totalPages: 0 });
+  const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
+  const [selectedUser, setSelectedUser] = useState<UserBackend | null>(null);
+  const [selectedActivity, setSelectedActivity] = useState<UserActivityBackend[]>([]);
+  const [stats, setStats] = useState<UserStatsBackend | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [detailLoading, setDetailLoading] = useState(false);
+  const [statsLoading, setStatsLoading] = useState(false);
+  const [error, setError] = useState('');
+  const [errorSolution, setErrorSolution] = useState<string | undefined>();
+  const [success, setSuccess] = useState('');
+  const [lockDuration, setLockDuration] = useState('60');
+  const [actionLoading, setActionLoading] = useState<'lock' | 'unlock' | ''>('');
+  const [exporting, setExporting] = useState<'csv' | 'excel' | ''>('');
+
+  const roleOptions = [
+    { value: '', label: 'All roles' },
+    ...(canAccessStats ? [{ value: 'platform_admin', label: 'Platform Admin' }] : []),
+    { value: 'owner', label: t('role.owner.label', lang) },
+    { value: 'manager', label: t('erole.manager', lang) },
+    { value: 'employee', label: t('erole.employee', lang) },
+    { value: 'accountant', label: t('erole.accountant', lang) },
+    { value: 'client', label: t('auth.roleClient', lang) },
+  ];
+
+  const loadUsers = async () => {
+    setLoading(true);
+    setError('');
+    try {
+      const response = await RealAPI.listUsers({
+        page: filters.page,
+        limit: filters.limit,
+        search: filters.search.trim() || undefined,
+        role: filters.role || undefined,
+        locked:
+          filters.locked === 'all'
+            ? undefined
+            : filters.locked === 'locked',
+        emailVerified:
+          filters.verified === 'all'
+            ? undefined
+            : filters.verified === 'verified',
+        sortBy: filters.sortBy,
+        sortOrder: filters.sortOrder,
+      });
+      setRows(response.items);
+      setMeta(response.meta);
+      setSelectedUserId((prev) => {
+        if (prev && response.items.some((item) => item.id === prev)) return prev;
+        return response.items[0]?.id || null;
+      });
+    } catch (err) {
+      const { message, solution } = getErrorMessage(err);
+      setError(message);
+      setErrorSolution(solution);
+      setRows([]);
+      setMeta({ page: 1, limit: filters.limit, total: 0, totalPages: 0 });
+      setSelectedUserId(null);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const loadSelectedUser = async (id: string) => {
+    setDetailLoading(true);
+    try {
+      const [detail, activity] = await Promise.all([
+        RealAPI.getUser(id),
+        RealAPI.getUserActivity(id, 1, 8),
+      ]);
+      setSelectedUser(detail);
+      setSelectedActivity(activity.items);
+    } catch (err) {
+      const { message, solution } = getErrorMessage(err);
+      setError(message);
+      setErrorSolution(solution);
+      setSelectedUser(null);
+      setSelectedActivity([]);
+    } finally {
+      setDetailLoading(false);
+    }
+  };
+
+  const loadStats = async () => {
+    if (!canAccessStats) return;
+    setStatsLoading(true);
+    try {
+      const result = await RealAPI.getUserStats();
+      setStats(result);
+    } catch {
+      setStats(null);
+    } finally {
+      setStatsLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    void loadUsers();
+  }, [
+    filters.search,
+    filters.role,
+    filters.locked,
+    filters.verified,
+    filters.sortBy,
+    filters.sortOrder,
+    filters.page,
+    filters.limit,
+  ]);
+
+  useEffect(() => {
+    if (!selectedUserId) {
+      setSelectedUser(null);
+      setSelectedActivity([]);
+      return;
+    }
+    void loadSelectedUser(selectedUserId);
+  }, [selectedUserId]);
+
+  useEffect(() => {
+    if (canAccessStats) {
+      void loadStats();
+    }
+  }, [canAccessStats]);
+
+  const selectedRow = rows.find((row) => row.id === selectedUserId);
+  const selectedUserIsLocked = !!selectedUser?.locked;
+
+  const handleExport = async (format: 'csv' | 'excel') => {
+    if (!canAccessStats) return;
+    setExporting(format);
+    setError('');
+    try {
+      const blob = await RealAPI.exportUsers(format, {
+        search: filters.search.trim() || undefined,
+        role: filters.role || undefined,
+        locked:
+          filters.locked === 'all'
+            ? undefined
+            : filters.locked === 'locked',
+        emailVerified:
+          filters.verified === 'all'
+            ? undefined
+            : filters.verified === 'verified',
+        sortBy: filters.sortBy,
+        sortOrder: filters.sortOrder,
+      });
+      downloadBlob(`users-export.${format === 'excel' ? 'xls' : 'csv'}`, blob);
+    } catch (err) {
+      const { message, solution } = getErrorMessage(err);
+      setError(message);
+      setErrorSolution(solution);
+    } finally {
+      setExporting('');
+    }
+  };
+
+  const handleLock = async () => {
+    if (!selectedUser) return;
+    setActionLoading('lock');
+    setError('');
+    setSuccess('');
+    try {
+      const result = await RealAPI.lockUser(
+        selectedUser.id,
+        Math.max(1, Number(lockDuration) || 60),
+      );
+      setSuccess(result.message);
+      await loadUsers();
+      await loadSelectedUser(selectedUser.id);
+    } catch (err) {
+      const { message, solution } = getErrorMessage(err);
+      setError(message);
+      setErrorSolution(solution);
+    } finally {
+      setActionLoading('');
+    }
+  };
+
+  const handleUnlock = async () => {
+    if (!selectedUser) return;
+    setActionLoading('unlock');
+    setError('');
+    setSuccess('');
+    try {
+      const result = await RealAPI.unlockUser(selectedUser.id);
+      setSuccess(result.message);
+      await loadUsers();
+      await loadSelectedUser(selectedUser.id);
+    } catch (err) {
+      const { message, solution } = getErrorMessage(err);
+      setError(message);
+      setErrorSolution(solution);
+    } finally {
+      setActionLoading('');
+    }
+  };
+
+  return (
+    <div className="space-y-6">
+      <PageHeader
+        title="Users"
+        description="Search, filter, export, inspect activity, and control account access directly in the platform."
+        actions={
+          <div className="flex flex-wrap gap-2">
+            <PrimaryButton
+              onClick={() => {
+                void loadUsers();
+                if (selectedUserId) void loadSelectedUser(selectedUserId);
+                if (canAccessStats) void loadStats();
+              }}
+              variant="outline"
+              className="px-4 py-2 text-sm"
+            >
+              <RefreshCw size={14} className={loading ? 'animate-spin' : ''} /> Refresh
+            </PrimaryButton>
+            {canAccessStats && (
+              <>
+                <PrimaryButton
+                  onClick={() => void handleExport('csv')}
+                  variant="outline"
+                  loading={exporting === 'csv'}
+                  className="px-4 py-2 text-sm"
+                >
+                  <Download size={14} /> CSV
+                </PrimaryButton>
+                <PrimaryButton
+                  onClick={() => void handleExport('excel')}
+                  variant="outline"
+                  loading={exporting === 'excel'}
+                  className="px-4 py-2 text-sm"
+                >
+                  <Download size={14} /> Excel
+                </PrimaryButton>
+              </>
+            )}
+          </div>
+        }
+      />
+
+      {error && (
+        <ErrorAlert
+          message={error}
+          solution={errorSolution}
+          onDismiss={() => {
+            setError('');
+            setErrorSolution(undefined);
+          }}
+        />
+      )}
+      {success && <SuccessAlert message={success} />}
+
+      {canAccessStats && (
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
+          <Card className="p-5">
+            <p className="text-xs font-semibold uppercase tracking-wider text-gray-500">Total users</p>
+            <p className="mt-2 text-3xl font-bold text-gray-900 dark:text-white">
+              {statsLoading ? '…' : stats?.totalUsers ?? '—'}
+            </p>
+          </Card>
+          <Card className="p-5">
+            <p className="text-xs font-semibold uppercase tracking-wider text-gray-500">
+              Active users ({stats?.windowDays ?? 30}d)
+            </p>
+            <p className="mt-2 text-3xl font-bold text-gray-900 dark:text-white">
+              {statsLoading ? '…' : stats?.activeUsers ?? '—'}
+            </p>
+          </Card>
+          <Card className="p-5">
+            <p className="text-xs font-semibold uppercase tracking-wider text-gray-500">Locked users</p>
+            <p className="mt-2 text-3xl font-bold text-gray-900 dark:text-white">
+              {statsLoading ? '…' : stats?.lockedUsers ?? '—'}
+            </p>
+          </Card>
+          <Card className="p-5">
+            <p className="text-xs font-semibold uppercase tracking-wider text-gray-500">Verified emails</p>
+            <p className="mt-2 text-3xl font-bold text-gray-900 dark:text-white">
+              {statsLoading ? '…' : stats?.verifiedUsers ?? '—'}
+            </p>
+          </Card>
+        </div>
+      )}
+
+      {canAccessStats && stats?.usersByRole?.length ? (
+        <Card className="p-5">
+          <div className="flex flex-wrap gap-2">
+            {stats.usersByRole.map((entry) => (
+              <Badge key={entry.role} variant={roleBadgeVariant(entry.role)}>
+                {backendRoleLabel(entry.role, lang)} • {entry.count}
+              </Badge>
+            ))}
+          </div>
+        </Card>
+      ) : null}
+
+      <Card className="p-5">
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-6 gap-4">
+          <InputField
+            label="Search"
+            value={filters.search}
+            onChange={(value) => setFilters((prev) => ({ ...prev, search: value, page: 1 }))}
+            placeholder="Name, email, company..."
+            icon={<Search size={16} />}
+          />
+          <SelectField
+            label="Role"
+            value={filters.role}
+            onChange={(value) =>
+              setFilters((prev) => ({
+                ...prev,
+                role: value as '' | UserRoleBackend,
+                page: 1,
+              }))
+            }
+            options={roleOptions}
+          />
+          <SelectField
+            label="Lock status"
+            value={filters.locked}
+            onChange={(value) =>
+              setFilters((prev) => ({
+                ...prev,
+                locked: value as 'all' | 'locked' | 'unlocked',
+                page: 1,
+              }))
+            }
+            options={[
+              { value: 'all', label: 'All' },
+              { value: 'locked', label: 'Locked' },
+              { value: 'unlocked', label: 'Unlocked' },
+            ]}
+          />
+          <SelectField
+            label="Verification"
+            value={filters.verified}
+            onChange={(value) =>
+              setFilters((prev) => ({
+                ...prev,
+                verified: value as 'all' | 'verified' | 'unverified',
+                page: 1,
+              }))
+            }
+            options={[
+              { value: 'all', label: 'All' },
+              { value: 'verified', label: 'Verified' },
+              { value: 'unverified', label: 'Unverified' },
+            ]}
+          />
+          <SelectField
+            label="Sort by"
+            value={filters.sortBy}
+            onChange={(value) =>
+              setFilters((prev) => ({
+                ...prev,
+                sortBy: value as typeof prev.sortBy,
+                page: 1,
+              }))
+            }
+            options={[
+              { value: 'createdAt', label: 'Created date' },
+              { value: 'name', label: 'Name' },
+              { value: 'email', label: 'Email' },
+              { value: 'lastLoginAt', label: 'Last login' },
+              { value: 'role', label: 'Role' },
+            ]}
+          />
+          <SelectField
+            label="Order"
+            value={filters.sortOrder}
+            onChange={(value) =>
+              setFilters((prev) => ({
+                ...prev,
+                sortOrder: value as 'asc' | 'desc',
+                page: 1,
+              }))
+            }
+            options={[
+              { value: 'desc', label: 'Newest first' },
+              { value: 'asc', label: 'Oldest first' },
+            ]}
+          />
+        </div>
+      </Card>
+
+      <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1.6fr)_minmax(360px,1fr)] gap-6">
+        <Card className="overflow-hidden">
+          {loading ? (
+            <div className="p-20 flex justify-center">
+              <Loader2 className="animate-spin text-primary-600" />
+            </div>
+          ) : rows.length === 0 ? (
+            <EmptyState
+              icon={<Users size={32} />}
+              title="No users found"
+              description="Try broadening the filters or clearing the search field."
+            />
+          ) : (
+            <>
+              <table className="w-full text-left">
+                <thead className="bg-gray-50 dark:bg-gray-800/50 border-b border-gray-100 dark:border-gray-800">
+                  <tr>
+                    <th className="px-6 py-3.5 text-xs font-semibold text-gray-500 uppercase tracking-wider">User</th>
+                    <th className="px-6 py-3.5 text-xs font-semibold text-gray-500 uppercase tracking-wider">Role</th>
+                    <th className="px-6 py-3.5 text-xs font-semibold text-gray-500 uppercase tracking-wider">Status</th>
+                    <th className="px-6 py-3.5 text-xs font-semibold text-gray-500 uppercase tracking-wider">Company</th>
+                    <th className="px-6 py-3.5 text-xs font-semibold text-gray-500 uppercase tracking-wider">Last login</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-100 dark:divide-gray-800">
+                  {rows.map((row) => {
+                    const selected = row.id === selectedUserId;
+                    return (
+                      <tr
+                        key={row.id}
+                        onClick={() => setSelectedUserId(row.id)}
+                        className={`cursor-pointer transition-colors ${
+                          selected
+                            ? 'bg-primary-50 dark:bg-primary-900/10'
+                            : 'hover:bg-gray-50/60 dark:hover:bg-gray-800/30'
+                        }`}
+                      >
+                        <td className="px-6 py-4">
+                          <div className="flex items-center gap-3">
+                            <div className="w-10 h-10 rounded-full overflow-hidden bg-primary-100 dark:bg-primary-900/20 flex items-center justify-center text-primary-700 text-xs font-bold shrink-0">
+                              {row.avatarUrl ? (
+                                <img
+                                  src={row.avatarUrl}
+                                  alt={row.name}
+                                  className="w-full h-full object-cover"
+                                />
+                              ) : (
+                                row.name
+                                  .split(' ')
+                                  .map((part) => part[0])
+                                  .join('')
+                                  .slice(0, 2)
+                                  .toUpperCase()
+                              )}
+                            </div>
+                            <div className="min-w-0">
+                              <p className="font-semibold text-sm text-gray-900 dark:text-white truncate">
+                                {row.name}
+                              </p>
+                              <p className="text-xs text-gray-500 truncate">{row.email}</p>
+                            </div>
+                          </div>
+                        </td>
+                        <td className="px-6 py-4">
+                          <div className="flex flex-wrap gap-1.5">
+                            <Badge variant={roleBadgeVariant(row.role)}>
+                              {backendRoleLabel(row.role, lang)}
+                            </Badge>
+                            {row.companyRole && (
+                              <Badge variant={roleBadgeVariant(row.companyRole)}>
+                                {roleJobLabel(row.companyRole, lang)}
+                              </Badge>
+                            )}
+                          </div>
+                        </td>
+                        <td className="px-6 py-4">
+                          <div className="flex flex-wrap gap-1.5">
+                            <Badge variant={row.emailVerified ? 'success' : 'warning'}>
+                              {row.emailVerified ? 'Verified' : 'Pending'}
+                            </Badge>
+                            {row.locked ? (
+                              <Badge variant="danger">Locked</Badge>
+                            ) : (
+                              <Badge variant="default">Open</Badge>
+                            )}
+                          </div>
+                        </td>
+                        <td className="px-6 py-4 text-sm text-gray-500">
+                          {row.companyName || '—'}
+                        </td>
+                        <td className="px-6 py-4 text-sm text-gray-500">
+                          {formatDateTime(row.lastLoginAt, lang)}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+              <div className="px-6 py-4 border-t border-gray-100 dark:border-gray-800 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <p className="text-sm text-gray-500">
+                  Showing {(meta.page - 1) * meta.limit + (rows.length ? 1 : 0)}-{(meta.page - 1) * meta.limit + rows.length} of {meta.total}
+                </p>
+                <div className="flex items-center gap-2">
+                  <PrimaryButton
+                    onClick={() =>
+                      setFilters((prev) => ({ ...prev, page: Math.max(1, prev.page - 1) }))
+                    }
+                    variant="outline"
+                    disabled={meta.page <= 1}
+                    className="px-4 py-2 text-sm"
+                  >
+                    Previous
+                  </PrimaryButton>
+                  <PrimaryButton
+                    onClick={() =>
+                      setFilters((prev) => ({
+                        ...prev,
+                        page:
+                          prev.page < meta.totalPages
+                            ? prev.page + 1
+                            : prev.page,
+                      }))
+                    }
+                    variant="outline"
+                    disabled={meta.page >= meta.totalPages}
+                    className="px-4 py-2 text-sm"
+                  >
+                    Next
+                  </PrimaryButton>
+                </div>
+              </div>
+            </>
+          )}
+        </Card>
+
+        <Card className="p-5">
+          {detailLoading ? (
+            <div className="py-16 flex justify-center">
+              <Loader2 className="animate-spin text-primary-600" />
+            </div>
+          ) : !selectedUser ? (
+            <EmptyState
+              icon={<UserCheck size={28} />}
+              title="Select a user"
+              description="Pick a row from the directory to inspect profile, access state, and activity."
+            />
+          ) : (
+            <div className="space-y-5">
+              <div className="flex items-start gap-4">
+                <div className="w-16 h-16 rounded-2xl overflow-hidden bg-primary-100 dark:bg-primary-900/20 flex items-center justify-center text-primary-700 font-bold text-lg shrink-0">
+                  {selectedUser.avatarUrl ? (
+                    <img
+                      src={selectedUser.avatarUrl}
+                      alt={selectedUser.name}
+                      className="w-full h-full object-cover"
+                    />
+                  ) : (
+                    selectedUser.name
+                      .split(' ')
+                      .map((part) => part[0])
+                      .join('')
+                      .slice(0, 2)
+                      .toUpperCase()
+                  )}
+                </div>
+                <div className="min-w-0 flex-1">
+                  <h3 className="text-lg font-bold text-gray-900 dark:text-white">
+                    {selectedUser.name}
+                  </h3>
+                  <p className="text-sm text-gray-500 break-all">{selectedUser.email}</p>
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    <Badge variant={roleBadgeVariant(selectedUser.role)}>
+                      {backendRoleLabel(selectedUser.role, lang)}
+                    </Badge>
+                    {selectedUser.companyRole && (
+                      <Badge variant={roleBadgeVariant(selectedUser.companyRole)}>
+                        {roleJobLabel(selectedUser.companyRole, lang)}
+                      </Badge>
+                    )}
+                    <Badge variant={selectedUser.emailVerified ? 'success' : 'warning'}>
+                      {selectedUser.emailVerified ? 'Verified' : 'Unverified'}
+                    </Badge>
+                    <Badge variant={selectedUserIsLocked ? 'danger' : 'default'}>
+                      {selectedUserIsLocked ? 'Locked' : 'Unlocked'}
+                    </Badge>
+                  </div>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 gap-3 text-sm">
+                <div className="rounded-xl bg-gray-50 dark:bg-gray-800/60 p-4">
+                  <p className="text-xs uppercase tracking-wider font-semibold text-gray-500">Company</p>
+                  <p className="mt-1 font-semibold text-gray-900 dark:text-white">
+                    {selectedUser.company?.name || selectedRow?.companyName || '—'}
+                  </p>
+                </div>
+                <div className="rounded-xl bg-gray-50 dark:bg-gray-800/60 p-4">
+                  <p className="text-xs uppercase tracking-wider font-semibold text-gray-500">Last login</p>
+                  <p className="mt-1 font-semibold text-gray-900 dark:text-white">
+                    {formatDateTime(selectedUser.lastLoginAt, lang)}
+                  </p>
+                </div>
+                <div className="rounded-xl bg-gray-50 dark:bg-gray-800/60 p-4">
+                  <p className="text-xs uppercase tracking-wider font-semibold text-gray-500">Account state</p>
+                  <p className="mt-1 font-semibold text-gray-900 dark:text-white">
+                    {selectedUserIsLocked
+                      ? selectedUser.lockReason === 'failed_attempts'
+                        ? 'Locked after 6 failed login attempts. Unlock required.'
+                        : `Locked until ${formatDateTime(selectedUser.lockedUntil, lang)}`
+                      : 'No active lock'}
+                  </p>
+                </div>
+              </div>
+
+              {canManageUserSecurity ? (
+                <div className="rounded-2xl border border-gray-100 dark:border-gray-800 p-4 space-y-3">
+                  <div>
+                    <h4 className="font-bold text-gray-900 dark:text-white">Access controls</h4>
+                    <p className="text-sm text-gray-500">
+                      Manually lock or unlock this account directly from the platform.
+                    </p>
+                  </div>
+                  <div className="flex flex-col sm:flex-row gap-3">
+                    <div className="sm:w-40">
+                      <InputField
+                        label="Lock duration (min)"
+                        type="number"
+                        value={lockDuration}
+                        onChange={setLockDuration}
+                        disabled={selectedUser.id === user.id}
+                      />
+                    </div>
+                    <div className="flex items-end gap-2">
+                      <PrimaryButton
+                        onClick={() => void handleLock()}
+                        loading={actionLoading === 'lock'}
+                        disabled={selectedUser.id === user.id || selectedUserIsLocked}
+                        className="px-4 py-3 text-sm"
+                      >
+                        <AlertCircle size={14} /> Lock user
+                      </PrimaryButton>
+                      <PrimaryButton
+                        onClick={() => void handleUnlock()}
+                        loading={actionLoading === 'unlock'}
+                        disabled={!selectedUserIsLocked}
+                        variant="outline"
+                        className="px-4 py-3 text-sm"
+                      >
+                        <CheckCircle2 size={14} /> Unlock user
+                      </PrimaryButton>
+                    </div>
+                  </div>
+                  {selectedUser.id === user.id && (
+                    <p className="text-xs text-amber-600 dark:text-amber-400">
+                      Self-lock is intentionally blocked.
+                    </p>
+                  )}
+                </div>
+              ) : null}
+
+              <div className="rounded-2xl border border-gray-100 dark:border-gray-800 p-4">
+                <div className="flex items-center justify-between gap-3 mb-3">
+                  <div>
+                    <h4 className="font-bold text-gray-900 dark:text-white">Recent activity</h4>
+                    <p className="text-sm text-gray-500">Latest account-specific actions and access events.</p>
+                  </div>
+                  <PrimaryButton
+                    onClick={() => selectedUserId && void loadSelectedUser(selectedUserId)}
+                    variant="outline"
+                    className="px-4 py-2 text-xs"
+                  >
+                    <RefreshCw size={13} /> Refresh
+                  </PrimaryButton>
+                </div>
+                {selectedActivity.length === 0 ? (
+                  <EmptyState
+                    icon={<History size={24} />}
+                    title="No activity yet"
+                    description="Once this user starts interacting with the platform, events will appear here."
+                  />
+                ) : (
+                  <div className="space-y-3">
+                    {selectedActivity.map((item) => (
+                      <div
+                        key={item.id}
+                        className="rounded-xl bg-gray-50 dark:bg-gray-800/50 px-4 py-3"
+                      >
+                        <div className="flex items-center justify-between gap-3">
+                          <p className="font-semibold text-sm text-gray-900 dark:text-white">
+                            {formatActivitySentence(item.action, item.entityType, item.entityId)}
+                          </p>
+                          <p className="text-xs text-gray-400">
+                            {formatDateTime(item.createdAt, lang)}
+                          </p>
+                        </div>
+                        <p className="text-xs text-gray-500 mt-1">
+                          {formatActivityContext(item.entityType, item.entityId)}
+                        </p>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+        </Card>
+      </div>
+    </div>
+  );
+};
+
+/* ================================================================
+   ADMIN - SETTINGS
+   ================================================================ */
+
+const LegacyAdminSettingsView: React.FC<{
+  tenant: Tenant | null;
+  onUpdate: (t: Tenant) => void;
+  companyId?: string;
+  lang: UiLang;
+  setLang: (l: UiLang) => void;
+  languageOptions?: LanguageOption[];
+}> = ({ tenant, onUpdate, companyId, lang, setLang, languageOptions }) => {
+  const langChoices =
+    languageOptions && languageOptions.length
+      ? languageOptions
+      : LANGUAGES.map((l) => ({ ...l, code: l.code as UiLang }));
+  const [isSaving, setIsSaving] = useState(false);
+  const [error, setError] = useState('');
+  const [errorSolution, setErrorSolution] = useState<string | undefined>();
+  const [saved, setSaved] = useState(false);
+  const [formData, setFormData] = useState(tenant ? { ...tenant, matriculeFiscal: '' } : { name: '', taxRate: 0, currency: 'USD', matriculeFiscal: '' } as any);
+
+  useEffect(() => {
+    if (companyId) {
+      RealAPI.getCompany(companyId)
+        .then(c => setFormData({ name: c.name, logo: c.logo, taxRate: c.taxRate, currency: c.currency, matriculeFiscal: c.matriculeFiscal || '' } as any))
+        .catch(err => { const { message, solution } = getErrorMessage(err); setError(message); setErrorSolution(solution); });
+    }
+  }, [companyId]);
+
+  const handleSave = async () => {
+    setIsSaving(true); setError(''); setSaved(false);
+    try {
+      if (companyId) {
+        const updated = await RealAPI.updateCompany(companyId, { name: formData.name, logo: formData.logo, matriculeFiscal: formData.matriculeFiscal, taxRate: formData.taxRate, currency: formData.currency });
+        onUpdate({ id: updated.id, name: updated.name, logo: updated.logo, currency: updated.currency, taxRate: updated.taxRate });
+      } else {
+        throw new Error(t('settings.noCompanyLinked', lang));
+      }
+      setSaved(true); setTimeout(() => setSaved(false), 3000);
+    } catch (e) { const { message, solution } = getErrorMessage(e); setError(message); setErrorSolution(solution); }
+    setIsSaving(false);
+  };
+
+  return (
+    <div className="max-w-3xl space-y-6">
+      <PageHeader title={t('settings.title', lang)} description={companyId ? t('page.settings.companyDesc', lang) : t('page.settings.profileDesc', lang)} />
+      {error && <ErrorAlert message={error} solution={errorSolution} onDismiss={() => { setError(''); setErrorSolution(undefined); }} />}
+      {saved && <SuccessAlert message={t('settings.saveSuccess', lang)} />}
+      <Card className="p-6">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+          <InputField label={t('settings.companyName', lang)} value={formData.name || ''} onChange={v => setFormData({ ...formData, name: v })} icon={<Building2 size={16} />} />
+          {companyId && (
+            <>
+              <InputField label={t('settings.logoUrl', lang)} type="url" value={formData.logo || ''} onChange={v => setFormData({ ...formData, logo: v })} placeholder={t('settings.logoPh', lang)} />
+              <InputField label={t('settings.taxId', lang)} value={formData.matriculeFiscal || ''} onChange={v => setFormData({ ...formData, matriculeFiscal: v })} icon={<Hash size={16} />} />
+            </>
+          )}
+          <SelectField
+            label={t('settings.language', lang)}
+            value={String(lang)}
+            onChange={(v) => setLang(v as UiLang)}
+            options={langChoices.map((o) => ({
+              value: String(o.code),
+              label: `${o.flag} ${o.label}`,
+            }))}
+          />
+        </div>
+        <div className="mt-6 pt-6 border-t border-gray-100 dark:border-gray-800 flex justify-end">
+          <PrimaryButton onClick={handleSave} loading={isSaving} className="px-6 py-3 text-sm">
+            <CheckCircle2 size={16} /> {t('settings.saveChanges', lang)}
+          </PrimaryButton>
+        </div>
+      </Card>
+    </div>
+  );
+};
+
+const AdminSettingsView: React.FC<{
+  user: User;
+  onUserUpdate: (u: User) => void;
+  tenant: Tenant | null;
+  onUpdate: (t: Tenant) => void;
+  companyId?: string;
+  lang: UiLang;
+  setLang: (l: UiLang) => void;
+  languageOptions: LanguageOption[];
+  themePreference: ThemePreference;
+  setThemePreference: (value: ThemePreference) => void;
+}> = ({ user, onUserUpdate, tenant, onUpdate, companyId, lang, setLang, languageOptions, themePreference, setThemePreference }) => {
+  const canEditCompanySettings =
+    !!companyId &&
+    (user.role === UserRole.BUSINESS_OWNER ||
+      user.role === UserRole.BUSINESS_ADMIN);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const [profileForm, setProfileForm] = useState({
+    name: user.name,
+    avatarUrl: user.avatarUrl || '',
+  });
+  const [preferencesForm, setPreferencesForm] = useState<UserPreferences>({
+    language: user.preferences?.language ?? String(lang),
+    theme: user.preferences?.theme
+      ? normalizeThemePreference(user.preferences.theme)
+      : themePreference,
+    timezone: user.preferences?.timezone || 'Africa/Tunis',
+    dateFormat: user.preferences?.dateFormat || 'DD/MM/YYYY',
+    notifications: {
+      email: user.preferences?.notifications?.email ?? true,
+      inApp: user.preferences?.notifications?.inApp ?? true,
+      marketing: user.preferences?.notifications?.marketing ?? false,
+      security: user.preferences?.notifications?.security ?? true,
+    },
+  });
+  const [companyForm, setCompanyForm] = useState({
+    name: tenant?.name || '',
+    logo: tenant?.logo || '',
+    matriculeFiscal: '',
+    taxRate: String(tenant?.taxRate ?? 0),
+    currency: tenant?.currency || 'USD',
+  });
+  const [activity, setActivity] = useState<UserActivityBackend[]>([]);
+  const [activityLoading, setActivityLoading] = useState(true);
+  const [requestResult, setRequestResult] =
+    useState<EmailVerificationRequestResponse | null>(null);
+  const [verificationEmail, setVerificationEmail] = useState(
+    user.pendingEmail || user.email,
+  );
+  const [verificationCode, setVerificationCode] = useState('');
+  const [profileSaving, setProfileSaving] = useState(false);
+  const [preferencesSaving, setPreferencesSaving] = useState(false);
+  const [companySaving, setCompanySaving] = useState(false);
+  const [avatarUploading, setAvatarUploading] = useState(false);
+  const [requestingVerification, setRequestingVerification] = useState(false);
+  const [confirmingVerification, setConfirmingVerification] = useState(false);
+  const [error, setError] = useState('');
+  const [errorSolution, setErrorSolution] = useState<string | undefined>();
+  const [success, setSuccess] = useState('');
+  const [twoFactorSetup, setTwoFactorSetup] =
+    useState<TwoFactorSetupBackend | null>(null);
+  const [twoFactorSetupCode, setTwoFactorSetupCode] = useState('');
+  const [twoFactorBusy, setTwoFactorBusy] =
+    useState<'' | 'setup' | 'confirm' | 'disable'>('');
+
+  const notificationOptions = useMemo(
+    () =>
+      (
+        [
+          { key: 'email' as const, labelKey: 'settings.notif.email', descKey: 'settings.notif.emailDesc' },
+          { key: 'inApp' as const, labelKey: 'settings.notif.inApp', descKey: 'settings.notif.inAppDesc' },
+          { key: 'security' as const, labelKey: 'settings.notif.security', descKey: 'settings.notif.securityDesc' },
+          { key: 'marketing' as const, labelKey: 'settings.notif.marketing', descKey: 'settings.notif.marketingDesc' },
+        ] as const
+      ).map((row) => ({
+        key: row.key,
+        label: t(row.labelKey, lang),
+        description: t(row.descKey, lang),
+      })),
+    [lang],
+  );
+
+  const profileAvatar =
+    profileForm.avatarUrl ||
+    user.avatarUrl ||
+    avatarFallback(profileForm.name || user.name);
+
+  const refreshCurrentUser = async (candidate?: UserBackend | null) => {
+    const refreshed = candidate || (await RealAPI.getMe());
+    if (refreshed) {
+      onUserUpdate(mapBackendUserToFrontendUser(refreshed));
+    }
+  };
+
+  const loadActivity = async () => {
+    setActivityLoading(true);
+    try {
+      const result = await RealAPI.getMyActivity(1, 8);
+      setActivity(result.items);
+    } catch {
+      setActivity([]);
+    } finally {
+      setActivityLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    setProfileForm({
+      name: user.name,
+      avatarUrl: user.avatarUrl || '',
+    });
+    setPreferencesForm({
+      language: user.preferences?.language ?? String(lang),
+      theme: user.preferences?.theme
+        ? normalizeThemePreference(user.preferences.theme)
+        : themePreference,
+      timezone: user.preferences?.timezone || 'Africa/Tunis',
+      dateFormat: user.preferences?.dateFormat || 'DD/MM/YYYY',
+      notifications: {
+        email: user.preferences?.notifications?.email ?? true,
+        inApp: user.preferences?.notifications?.inApp ?? true,
+        marketing: user.preferences?.notifications?.marketing ?? false,
+        security: user.preferences?.notifications?.security ?? true,
+      },
+    });
+    setVerificationEmail(user.pendingEmail || user.email);
+  }, [user, lang, themePreference]);
+
+  useEffect(() => {
+    if (!canEditCompanySettings || !companyId) return;
+    RealAPI.getCompany(companyId)
+      .then((company) =>
+        setCompanyForm({
+          name: company.name,
+          logo: company.logo || '',
+          matriculeFiscal: company.matriculeFiscal || '',
+          taxRate: String(company.taxRate ?? 0),
+          currency: company.currency || 'USD',
+        }),
+      )
+      .catch((err) => {
+        const { message, solution } = getErrorMessage(err);
+        setError(message);
+        setErrorSolution(solution);
+      });
+  }, [canEditCompanySettings, companyId]);
+
+  useEffect(() => {
+    void loadActivity();
+  }, []);
+
+  useEffect(() => {
+    if (user.twoFactorEnabled) {
+      setTwoFactorSetup(null);
+      setTwoFactorSetupCode('');
+    }
+  }, [user.id, user.twoFactorEnabled]);
+
+  const applyThemePreference = (theme: UserPreferences['theme']) => {
+    setThemePreference(normalizeThemePreference(theme));
+  };
+
+  const handleSaveProfile = async () => {
+    setProfileSaving(true);
+    setError('');
+    setSuccess('');
+    try {
+      const updated = await RealAPI.updateProfile({
+        name: profileForm.name.trim(),
+        avatarUrl: profileForm.avatarUrl.trim(),
+      });
+      await refreshCurrentUser(updated);
+      setSuccess(t('settings.saveSuccess', lang));
+    } catch (err) {
+      const { message, solution } = getErrorMessage(err);
+      setError(message);
+      setErrorSolution(solution);
+    } finally {
+      setProfileSaving(false);
+    }
+  };
+
+  const handleAvatarUpload = async (file?: File | null) => {
+    if (!file) return;
+    setAvatarUploading(true);
+    setError('');
+    setSuccess('');
+    try {
+      const updated = await RealAPI.uploadAvatar(file);
+      await refreshCurrentUser(updated);
+      setProfileForm((prev) => ({ ...prev, avatarUrl: updated.avatarUrl || '' }));
+      setSuccess(t('settings.saveSuccess', lang));
+    } catch (err) {
+      const { message, solution } = getErrorMessage(err);
+      setError(message);
+      setErrorSolution(solution);
+    } finally {
+      setAvatarUploading(false);
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    }
+  };
+
+  const handleSavePreferences = async () => {
+    setPreferencesSaving(true);
+    setError('');
+    setSuccess('');
+    try {
+      const result = await RealAPI.updateMyPreferences(preferencesForm);
+      await refreshCurrentUser(result.user);
+      const nextLang = preferenceLanguageToUiLang(preferencesForm.language);
+      if (nextLang) setLang(nextLang);
+      applyThemePreference(preferencesForm.theme);
+      setSuccess(t('settings.saveSuccess', nextLang ?? lang));
+    } catch (err) {
+      const { message, solution } = getErrorMessage(err);
+      setError(message);
+      setErrorSolution(solution);
+    } finally {
+      setPreferencesSaving(false);
+    }
+  };
+
+  const handleRequestVerification = async () => {
+    setRequestingVerification(true);
+    setError('');
+    setSuccess('');
+    try {
+      const trimmedEmail = verificationEmail.trim();
+      const result = await RealAPI.requestEmailVerification(
+        trimmedEmail && trimmedEmail !== user.email ? trimmedEmail : undefined,
+      );
+      setRequestResult(result);
+      await refreshCurrentUser();
+      setSuccess('Verification code generated.');
+    } catch (err) {
+      const { message, solution } = getErrorMessage(err);
+      setError(message);
+      setErrorSolution(solution);
+    } finally {
+      setRequestingVerification(false);
+    }
+  };
+
+  const handleConfirmVerification = async () => {
+    setConfirmingVerification(true);
+    setError('');
+    setSuccess('');
+    try {
+      const result = await RealAPI.confirmEmailVerification(
+        verificationCode.trim(),
+      );
+      await refreshCurrentUser(result.user);
+      setVerificationCode('');
+      setRequestResult(null);
+      setSuccess(result.message);
+    } catch (err) {
+      const { message, solution } = getErrorMessage(err);
+      setError(message);
+      setErrorSolution(solution);
+    } finally {
+      setConfirmingVerification(false);
+    }
+  };
+
+  const handleSaveCompany = async () => {
+    if (!canEditCompanySettings || !companyId) return;
+    setCompanySaving(true);
+    setError('');
+    setSuccess('');
+    try {
+      const updated = await RealAPI.updateCompany(companyId, {
+        name: companyForm.name.trim(),
+        logo: companyForm.logo.trim(),
+        matriculeFiscal: companyForm.matriculeFiscal.trim(),
+        taxRate: Number(companyForm.taxRate || 0),
+        currency: companyForm.currency,
+      });
+      onUpdate({
+        id: updated.id,
+        name: updated.name,
+        logo: updated.logo,
+        currency: updated.currency,
+        taxRate: updated.taxRate,
+      });
+      setSuccess(t('settings.companySaved', lang));
+    } catch (err) {
+      const { message, solution } = getErrorMessage(err);
+      setError(message);
+      setErrorSolution(solution);
+    } finally {
+      setCompanySaving(false);
+    }
+  };
+
+  const handleBeginTwoFactorSetup = async () => {
+    setTwoFactorBusy('setup');
+    setError('');
+    setSuccess('');
+    try {
+      const setup = await RealAPI.beginTwoFactorSetup();
+      setTwoFactorSetup(setup);
+      setTwoFactorSetupCode('');
+      setSuccess(
+        'Scan the QR code with your authenticator app, then enter the 6-digit code to finish setup.',
+      );
+    } catch (err) {
+      const { message, solution } = getErrorMessage(err);
+      setError(message);
+      setErrorSolution(solution);
+    } finally {
+      setTwoFactorBusy('');
+    }
+  };
+
+  const handleConfirmTwoFactorSetup = async () => {
+    if (!twoFactorSetup) return;
+    if (normalizeVerificationCode(twoFactorSetupCode).length !== 6) {
+      setError('Enter the 6-digit code from your authenticator app.');
+      setErrorSolution(undefined);
+      return;
+    }
+
+    setTwoFactorBusy('confirm');
+    setError('');
+    setSuccess('');
+    try {
+      const result = await RealAPI.completeTwoFactorSetup(
+        normalizeVerificationCode(twoFactorSetupCode),
+      );
+      await refreshCurrentUser(result.user);
+      await loadActivity();
+      setTwoFactorSetup(null);
+      setTwoFactorSetupCode('');
+      setSuccess(result.message);
+    } catch (err) {
+      const { message, solution } = getErrorMessage(err);
+      setError(message);
+      setErrorSolution(solution);
+    } finally {
+      setTwoFactorBusy('');
+    }
+  };
+
+  const handleDisableTwoFactor = async () => {
+    setTwoFactorBusy('disable');
+    setError('');
+    setSuccess('');
+    try {
+      const result = await RealAPI.disableTwoFactor();
+      await refreshCurrentUser(result.user);
+      await loadActivity();
+      setTwoFactorSetup(null);
+      setTwoFactorSetupCode('');
+      setSuccess(result.message);
+    } catch (err) {
+      const { message, solution } = getErrorMessage(err);
+      setError(message);
+      setErrorSolution(solution);
+    } finally {
+      setTwoFactorBusy('');
+    }
+  };
+
+  return (
+    <div className="space-y-6">
+      <PageHeader title={t('settings.title', lang)} description={t('settings.pageLead', lang)} />
+      {error && (
+        <ErrorAlert
+          message={error}
+          solution={errorSolution}
+          onDismiss={() => {
+            setError('');
+            setErrorSolution(undefined);
+          }}
+        />
+      )}
+      {success && <SuccessAlert message={success} />}
+
+      <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1.25fr)_minmax(0,1fr)] gap-6">
+        <div className="space-y-6">
+          <Card className="p-6">
+            <div className="flex flex-col md:flex-row md:items-start gap-5">
+              <div className="w-24 h-24 rounded-3xl overflow-hidden bg-primary-100 dark:bg-primary-900/20 flex items-center justify-center shrink-0">
+                <img src={profileAvatar} alt={user.name} className="w-full h-full object-cover" />
+              </div>
+              <div className="flex-1 space-y-4">
+                <div>
+                  <h3 className="text-lg font-bold text-gray-900 dark:text-white">
+                    {t('settings.profileTitle', lang)}
+                  </h3>
+                  <p className="text-sm text-gray-500">{t('settings.profileLead', lang)}</p>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <Badge variant={user.emailVerified ? 'success' : 'warning'}>
+                    {user.emailVerified ? t('settings.emailVerified', lang) : t('settings.emailPending', lang)}
+                  </Badge>
+                  <Badge variant={roleBadgeVariant(user.companyRole || String(user.role))}>
+                    {user.companyRole ? roleJobLabel(user.companyRole, lang) : user.role}
+                  </Badge>
+                  <Badge variant={user.twoFactorEnabled ? 'success' : 'default'}>
+                    {user.twoFactorEnabled ? t('settings.twoFAOn', lang) : t('settings.twoFAOff', lang)}
+                  </Badge>
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <InputField
+                    label={t('emp.fullName', lang)}
+                    value={profileForm.name}
+                    onChange={(value) => setProfileForm((prev) => ({ ...prev, name: value }))}
+                    icon={<UserCheck size={16} />}
+                  />
+                  <InputField
+                    label={t('common.email', lang)}
+                    value={user.email}
+                    onChange={() => {}}
+                    icon={<Mail size={16} />}
+                    disabled
+                  />
+                  <div className="md:col-span-2">
+                    <InputField
+                      label={t('settings.avatarUrlLabel', lang)}
+                      type="url"
+                      value={profileForm.avatarUrl}
+                      onChange={(value) => setProfileForm((prev) => ({ ...prev, avatarUrl: value }))}
+                      placeholder={t('settings.logoPh', lang)}
+                    />
+                  </div>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    accept="image/png,image/jpeg,image/webp,image/gif"
+                    className="hidden"
+                    onChange={(event) => void handleAvatarUpload(event.target.files?.[0])}
+                  />
+                  <PrimaryButton
+                    onClick={() => fileInputRef.current?.click()}
+                    variant="outline"
+                    loading={avatarUploading}
+                    className="px-4 py-2.5 text-sm"
+                  >
+                    <Plus size={14} /> {t('settings.uploadAvatar', lang)}
+                  </PrimaryButton>
+                  <PrimaryButton
+                    onClick={() => void handleSaveProfile()}
+                    loading={profileSaving}
+                    className="px-4 py-2.5 text-sm"
+                  >
+                    <CheckCircle2 size={14} /> {t('settings.saveProfile', lang)}
+                  </PrimaryButton>
+                </div>
+                <div className="rounded-xl bg-gray-50 dark:bg-gray-800/60 px-4 py-3 text-sm">
+                  <p className="text-xs uppercase tracking-wider font-semibold text-gray-500">
+                    {t('settings.lastLogin', lang)}
+                  </p>
+                  <p className="mt-1 font-semibold text-gray-900 dark:text-white">
+                    {formatDateTime(user.lastLoginAt, lang)}
+                  </p>
+                </div>
+              </div>
+            </div>
+          </Card>
+
+          <Card className="p-6">
+            <div className="space-y-5">
+              <div>
+                <h3 className="text-lg font-bold text-gray-900 dark:text-white">
+                  {t('settings.prefsTitle', lang)}
+                </h3>
+                <p className="text-sm text-gray-500">{t('settings.prefsLead', lang)}</p>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <SelectField
+                  label={t('settings.language', lang)}
+                  value={preferencesForm.language || String(lang)}
+                  onChange={(value) => {
+                    setPreferencesForm((prev) => ({ ...prev, language: value }));
+                    setLang(value as UiLang);
+                  }}
+                  options={languageOptions.map((o) => ({
+                    value: String(o.code),
+                    label: `${o.flag} ${o.label}`,
+                  }))}
+                />
+                <SelectField
+                  label={t('settings.theme', lang)}
+                  value={preferencesForm.theme || 'light'}
+                  onChange={(value) =>
+                    setPreferencesForm((prev) => ({
+                      ...prev,
+                      theme: value as UserPreferences['theme'],
+                    }))
+                  }
+                  options={[
+                    { value: 'light', label: t('settings.themeLight', lang) },
+                    { value: 'dark', label: t('settings.themeDark', lang) },
+                  ]}
+                />
+                <SelectField
+                  label={t('settings.timezone', lang)}
+                  value={preferencesForm.timezone || 'Africa/Tunis'}
+                  onChange={(value) => setPreferencesForm((prev) => ({ ...prev, timezone: value }))}
+                  options={[
+                    { value: 'Africa/Tunis', label: 'Africa/Tunis' },
+                    { value: 'UTC', label: 'UTC' },
+                    { value: 'Europe/Paris', label: 'Europe/Paris' },
+                    { value: 'America/New_York', label: 'America/New_York' },
+                  ]}
+                />
+                <SelectField
+                  label={t('settings.dateFormat', lang)}
+                  value={preferencesForm.dateFormat || 'DD/MM/YYYY'}
+                  onChange={(value) => setPreferencesForm((prev) => ({ ...prev, dateFormat: value }))}
+                  options={[
+                    { value: 'DD/MM/YYYY', label: 'DD/MM/YYYY' },
+                    { value: 'MM/DD/YYYY', label: 'MM/DD/YYYY' },
+                    { value: 'YYYY-MM-DD', label: 'YYYY-MM-DD' },
+                  ]}
+                />
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {notificationOptions.map((option) => (
+                  <label
+                    key={option.key}
+                    className="rounded-2xl border border-gray-100 dark:border-gray-800 bg-gray-50 dark:bg-gray-800/50 p-4 flex gap-3 cursor-pointer"
+                  >
+                    <input
+                      type="checkbox"
+                      checked={preferencesForm.notifications?.[option.key] ?? false}
+                      onChange={(event) =>
+                        setPreferencesForm((prev) => ({
+                          ...prev,
+                          notifications: {
+                            ...(prev.notifications || {}),
+                            [option.key]: event.target.checked,
+                          },
+                        }))
+                      }
+                      className="mt-1 h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+                    />
+                    <div>
+                      <p className="font-semibold text-sm text-gray-900 dark:text-white">{option.label}</p>
+                      <p className="text-xs text-gray-500 mt-1">{option.description}</p>
+                    </div>
+                  </label>
+                ))}
+              </div>
+              <div className="flex justify-end">
+                <PrimaryButton
+                  onClick={() => void handleSavePreferences()}
+                  loading={preferencesSaving}
+                  className="px-5 py-2.5 text-sm"
+                >
+                  <CheckCircle2 size={14} /> {t('settings.savePrefs', lang)}
+                </PrimaryButton>
+              </div>
+            </div>
+          </Card>
+
+          {canEditCompanySettings ? (
+            <Card className="p-6">
+              <div className="space-y-5">
+                <div>
+                  <h3 className="text-lg font-bold text-gray-900 dark:text-white">
+                    {t('settings.companyCardTitle', lang)}
+                  </h3>
+                  <p className="text-sm text-gray-500">{t('settings.companyCardLead', lang)}</p>
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <InputField
+                    label={t('settings.companyName', lang)}
+                    value={companyForm.name}
+                    onChange={(value) => setCompanyForm((prev) => ({ ...prev, name: value }))}
+                    icon={<Building2 size={16} />}
+                  />
+                  <InputField
+                    label={t('settings.logoUrl', lang)}
+                    type="url"
+                    value={companyForm.logo}
+                    onChange={(value) => setCompanyForm((prev) => ({ ...prev, logo: value }))}
+                    placeholder={t('settings.logoPh', lang)}
+                  />
+                  <InputField
+                    label={t('settings.taxId', lang)}
+                    value={companyForm.matriculeFiscal}
+                    onChange={(value) => setCompanyForm((prev) => ({ ...prev, matriculeFiscal: value }))}
+                    icon={<Hash size={16} />}
+                  />
+                  <SelectField
+                    label={t('settings.currency', lang)}
+                    value={companyForm.currency}
+                    onChange={(value) => setCompanyForm((prev) => ({ ...prev, currency: value }))}
+                    options={[
+                      { value: 'USD', label: 'USD' },
+                      { value: 'EUR', label: 'EUR' },
+                      { value: 'TND', label: 'TND' },
+                    ]}
+                  />
+                  <InputField
+                    label={t('settings.taxRate', lang)}
+                    type="number"
+                    value={companyForm.taxRate}
+                    onChange={(value) => setCompanyForm((prev) => ({ ...prev, taxRate: value }))}
+                  />
+                </div>
+                <div className="flex justify-end">
+                  <PrimaryButton
+                    onClick={() => void handleSaveCompany()}
+                    loading={companySaving}
+                    className="px-5 py-2.5 text-sm"
+                  >
+                    <CheckCircle2 size={14} /> {t('settings.saveCompanySettings', lang)}
+                  </PrimaryButton>
+                </div>
+              </div>
+            </Card>
+          ) : null}
+        </div>
+
+        <div className="space-y-6">
+          <Card className="p-6">
+            <div className="space-y-5">
+              <div>
+                <h3 className="text-lg font-bold text-gray-900 dark:text-white">Authenticator App 2FA</h3>
+                <p className="text-sm text-gray-500">
+                  Protect this account with a TOTP authenticator app such as Google Authenticator, Microsoft Authenticator, Authy, or 1Password.
+                </p>
+              </div>
+
+              <div className="flex flex-wrap gap-2">
+                <Badge variant={user.twoFactorEnabled ? 'success' : 'warning'}>
+                  {user.twoFactorEnabled ? 'Enabled' : 'Disabled'}
+                </Badge>
+                <Badge variant="info">
+                  6-digit rotating codes
+                </Badge>
+                {twoFactorSetup ? <Badge variant="warning">Setup in progress</Badge> : null}
+              </div>
+
+              <div className="rounded-2xl bg-gray-50 dark:bg-gray-800/60 border border-gray-100 dark:border-gray-800 p-4 space-y-2 text-sm">
+                <p className="text-gray-700 dark:text-gray-300">
+                  {user.twoFactorEnabled
+                    ? 'Password login will pause for a 6-digit authenticator code before access is granted.'
+                    : 'Once enabled, you will enter your password first and then confirm with the current 6-digit code from your authenticator app.'}
+                </p>
+                <p className="text-xs text-gray-500">
+                  Scan the QR code in your authenticator app, then enter the current code to finish setup.
+                </p>
+                {user.twoFactorEnrolledAt ? (
+                  <p className="text-xs text-gray-500">
+                    Enrolled: {formatDateTime(user.twoFactorEnrolledAt, lang)}
+                  </p>
+                ) : null}
+                {user.twoFactorLastVerifiedAt ? (
+                  <p className="text-xs text-gray-500">
+                    Last 2FA sign-in: {formatDateTime(user.twoFactorLastVerifiedAt, lang)}
+                  </p>
+                ) : null}
+              </div>
+
+              <div className="flex flex-wrap gap-2">
+                {user.twoFactorEnabled ? (
+                  <PrimaryButton
+                    onClick={() => void handleDisableTwoFactor()}
+                    loading={twoFactorBusy === 'disable'}
+                    variant="danger"
+                    className="px-4 py-2.5 text-sm"
+                  >
+                    <ShieldCheck size={14} /> Disable authenticator app 2FA
+                  </PrimaryButton>
+                ) : (
+                  <PrimaryButton
+                    onClick={() => void handleBeginTwoFactorSetup()}
+                    loading={twoFactorBusy === 'setup'}
+                    className="px-4 py-2.5 text-sm"
+                  >
+                    <ShieldCheck size={14} /> Set up authenticator app
+                  </PrimaryButton>
+                )}
+              </div>
+
+              {!user.twoFactorEnabled && twoFactorSetup ? (
+                <div className="rounded-2xl border border-gray-200 dark:border-gray-800 p-4 space-y-4">
+                  <div className="flex flex-col gap-4 md:flex-row md:items-start">
+                    <div className="w-full md:w-56 shrink-0">
+                      <img
+                        src={twoFactorSetup.qrCodeDataUrl}
+                        alt="Authenticator app QR code"
+                        className="w-full max-w-[220px] rounded-2xl border border-gray-200 dark:border-gray-800 bg-white p-3"
+                      />
+                    </div>
+                    <div className="space-y-3 min-w-0">
+                      <div>
+                        <p className="font-semibold text-sm text-gray-900 dark:text-white">
+                          1. Scan this QR code with your authenticator app
+                        </p>
+                        <p className="text-sm text-gray-500">
+                          If you cannot scan it, enter the manual key below in your authenticator app instead.
+                        </p>
+                      </div>
+                      <div className="rounded-xl bg-gray-50 dark:bg-gray-800/60 border border-gray-100 dark:border-gray-800 p-3 space-y-1">
+                        <p className="text-[11px] font-semibold uppercase tracking-wider text-gray-500">
+                          Manual setup key
+                        </p>
+                        <p className="font-mono text-sm text-gray-900 dark:text-white break-all">
+                          {twoFactorSetup.manualEntryKey}
+                        </p>
+                        <p className="text-xs text-gray-500">
+                          Issuer: {twoFactorSetup.issuer} • Account: {twoFactorSetup.accountLabel}
+                        </p>
+                      </div>
+                      <p className="text-xs text-gray-500">
+                        This QR code expires {formatDateTime(twoFactorSetup.expiresAt, lang)}.
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="space-y-3 border-t border-gray-100 dark:border-gray-800 pt-4">
+                    <p className="font-semibold text-sm text-gray-900 dark:text-white">
+                      2. Enter the current 6-digit code to enable 2FA
+                    </p>
+                    <InputField
+                      label="Authenticator code"
+                      type="text"
+                      value={twoFactorSetupCode}
+                      onChange={(value) => setTwoFactorSetupCode(normalizeVerificationCode(value))}
+                      placeholder="123456"
+                      icon={<Hash size={16} />}
+                    />
+                    <div className="flex flex-wrap gap-2">
+                      <PrimaryButton
+                        onClick={() => void handleConfirmTwoFactorSetup()}
+                        loading={twoFactorBusy === 'confirm'}
+                        className="px-4 py-2.5 text-sm"
+                      >
+                        <ShieldCheck size={14} /> Verify and enable
+                      </PrimaryButton>
+                      <PrimaryButton
+                        onClick={() => {
+                          setTwoFactorSetup(null);
+                          setTwoFactorSetupCode('');
+                          setSuccess('');
+                          setError('');
+                          setErrorSolution(undefined);
+                        }}
+                        variant="outline"
+                        className="px-4 py-2.5 text-sm"
+                      >
+                        <X size={14} /> Cancel setup
+                      </PrimaryButton>
+                    </div>
+                  </div>
+                </div>
+              ) : null}
+            </div>
+          </Card>
+
+          <Card className="p-6">
+            <div className="space-y-5">
+              <div>
+                <h3 className="text-lg font-bold text-gray-900 dark:text-white">Email verification</h3>
+                <p className="text-sm text-gray-500">
+                  Request a code, optionally test a new email address, and confirm the verification flow from inside the platform.
+                </p>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <Badge variant={user.emailVerified ? 'success' : 'warning'}>
+                  {user.emailVerified ? 'Verified' : 'Not verified'}
+                </Badge>
+                {user.pendingEmail ? <Badge variant="info">Pending email: {user.pendingEmail}</Badge> : null}
+              </div>
+              <InputField
+                label="Current or new email"
+                type="email"
+                value={verificationEmail}
+                onChange={setVerificationEmail}
+                icon={<Mail size={16} />}
+              />
+              <div className="flex justify-end">
+                <PrimaryButton
+                  onClick={() => void handleRequestVerification()}
+                  loading={requestingVerification}
+                  className="px-4 py-2.5 text-sm"
+                >
+                  <Mail size={14} /> Request code
+                </PrimaryButton>
+              </div>
+              {requestResult && (
+                <div className="rounded-2xl bg-gray-50 dark:bg-gray-800/60 border border-gray-100 dark:border-gray-800 p-4 space-y-3">
+                  <p className="font-semibold text-sm text-gray-900 dark:text-white">{requestResult.message}</p>
+                  <p className="text-xs text-gray-500">
+                    Target: {requestResult.targetEmail} • Expires at {formatDateTime(requestResult.expiresAt, lang)}
+                  </p>
+                  {requestResult.previewUrl ? (
+                    <a
+                      href={requestResult.previewUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-2 text-sm font-semibold text-primary-600 hover:text-primary-700 hover:underline"
+                    >
+                      <ExternalLink size={14} /> Open preview email
+                    </a>
+                  ) : null}
+                  {requestResult.codeForDev ? (
+                    <p className="text-xs text-amber-600 dark:text-amber-400">
+                      Dev code: <span className="font-mono font-bold">{requestResult.codeForDev}</span>
+                    </p>
+                  ) : null}
+                </div>
+              )}
+              <div className="pt-4 border-t border-gray-100 dark:border-gray-800 space-y-3">
+                <InputField
+                  label="Verification code"
+                  value={verificationCode}
+                  onChange={setVerificationCode}
+                  placeholder="6-digit code"
+                />
+                <div className="flex justify-end">
+                  <PrimaryButton
+                    onClick={() => void handleConfirmVerification()}
+                    loading={confirmingVerification}
+                    disabled={!verificationCode.trim()}
+                    className="px-4 py-2.5 text-sm"
+                  >
+                    <CheckCircle2 size={14} /> Confirm verification
+                  </PrimaryButton>
+                </div>
+              </div>
+            </div>
+          </Card>
+
+          <Card className="p-6">
+            <div className="flex items-center justify-between gap-3 mb-4">
+              <div>
+                <h3 className="text-lg font-bold text-gray-900 dark:text-white">My activity</h3>
+                <p className="text-sm text-gray-500">
+                  Personal audit trail recorded by the backend interceptor.
+                </p>
+              </div>
+              <PrimaryButton
+                onClick={() => void loadActivity()}
+                variant="outline"
+                className="px-4 py-2 text-xs"
+              >
+                <RefreshCw size={13} className={activityLoading ? 'animate-spin' : ''} /> Refresh
+              </PrimaryButton>
+            </div>
+            {activityLoading ? (
+              <div className="py-16 flex justify-center">
+                <Loader2 className="animate-spin text-primary-600" />
+              </div>
+            ) : activity.length === 0 ? (
+              <EmptyState
+                icon={<History size={24} />}
+                title="No activity yet"
+                description="Actions you trigger in the platform will start showing up here."
+              />
+            ) : (
+              <div className="space-y-3">
+                {activity.map((item) => (
+                  <div key={item.id} className="rounded-xl bg-gray-50 dark:bg-gray-800/50 px-4 py-3">
+                    <div className="flex items-center justify-between gap-3">
+                      <p className="font-semibold text-sm text-gray-900 dark:text-white">
+                        {formatActivitySentence(item.action, item.entityType, item.entityId)}
+                      </p>
+                      <p className="text-xs text-gray-400">{formatDateTime(item.createdAt, lang)}</p>
+                    </div>
+                    <p className="text-xs text-gray-500 mt-1">
+                      {formatActivityContext(item.entityType, item.entityId)}
+                    </p>
+                  </div>
+                ))}
+              </div>
+            )}
+          </Card>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+/* ================================================================
+   CLIENT PAGES
+   ================================================================ */
+
+const ClientDashboardView: React.FC<{ user: User; lang: UiLang }> = ({ user, lang }) => {
+  const [invoices, setInvoices] = useState<Invoice[]>([]);
+  useEffect(() => {
+    void (async () => {
+      try {
+        const rows = await RealAPI.getInvoices();
+        setInvoices(rows.map(invoiceFromBackend));
+      } catch {
+        setInvoices([]);
+      }
+    })();
+  }, [user]);
+  const outstanding = invoices.filter(i => i.status !== 'Paid').reduce((a, b) => a + b.total, 0);
+
+  return (
+    <div className="space-y-6">
+      <PageHeader title={t('page.clientPortal.title', lang)} description={`${t('page.clientPortal.welcome', lang)}, ${user.name}`}
+        actions={<PrimaryButton onClick={() => window.alert('Support: support@finops.com')} className="px-5 py-2.5 text-sm"><MessageSquare size={16} /> {t('nav.support', lang)}</PrimaryButton>}
+      />
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <StatCard title={t('page.client.balanceDue', lang)} value={`${outstanding.toLocaleString(localeForLang(lang))} €`} change={t('page.client.inProgress', lang)} isPositive={false} icon={<CreditCard size={20} />} />
+        <StatCard title={t('page.client.projectStep', lang)} value="85%" change={t('page.client.phase', lang)} isPositive icon={<TrendingUp size={20} />} />
+        <StatCard title={t('page.client.paidTotal', lang)} value="25 400 €" change={t('page.client.cumulative', lang)} isPositive icon={<CheckCircle2 size={20} />} />
+      </div>
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <Card className="p-6">
+          <h2 className="font-bold text-gray-900 dark:text-white mb-4">{t('page.client.lastInvoices', lang)}</h2>
+          <div className="space-y-3">
+            {invoices.slice(0, 3).map(inv => (
+              <div key={inv.id} className="p-4 bg-gray-50 dark:bg-gray-800/50 rounded-xl flex items-center justify-between hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors">
+                <div className="flex items-center gap-3">
+                  <div className="w-9 h-9 bg-white dark:bg-gray-800 rounded-lg flex items-center justify-center text-primary-600 shadow-sm"><FileText size={16} /></div>
+                  <div>
+                    <p className="font-semibold text-sm text-gray-900 dark:text-white">{inv.number}</p>
+                    <p className="text-xs text-gray-400">{inv.date}</p>
+                  </div>
+                </div>
+                <div className="text-right">
+                  <p className="font-bold text-gray-900 dark:text-white">{inv.total.toLocaleString()} €</p>
+                  <Badge variant={inv.status === 'Paid' ? 'success' : 'danger'}>{invoiceStatusLabel(inv.status, lang)}</Badge>
+                </div>
+              </div>
+            ))}
+          </div>
+        </Card>
+        <Card className="p-6">
+          <h2 className="font-bold text-gray-900 dark:text-white mb-6">{t('page.client.projectProgressTitle', lang)}</h2>
+          <div className="space-y-6">
+            <TimelineStep title={t('page.client.timeline.design', lang)} status={t('page.client.timeline.done', lang)} done />
+            <TimelineStep title={t('page.client.timeline.infra', lang)} status={t('page.client.timeline.active', lang)} active />
+            <TimelineStep title={t('page.client.timeline.audit', lang)} status={t('page.client.timeline.upcoming', lang)} />
+          </div>
+        </Card>
+      </div>
+    </div>
+  );
+};
+
+const TimelineStep: React.FC<{ title: string; status: string; done?: boolean; active?: boolean }> = ({ title, status, done, active }) => (
+  <div className="flex gap-3">
+    <div className="flex flex-col items-center">
+      <div className={`w-3.5 h-3.5 rounded-full border-[3px] ${done ? 'bg-emerald-500 border-emerald-200 dark:border-emerald-900/40' : active ? 'bg-primary-600 border-primary-200 dark:border-primary-900/40 animate-pulse' : 'bg-gray-200 border-gray-100 dark:bg-gray-700 dark:border-gray-800'}`}></div>
+      <div className="w-px flex-1 bg-gray-200 dark:bg-gray-800 my-1"></div>
+    </div>
+    <div className="flex-1 pb-4">
+      <p className={`font-semibold text-sm ${done ? 'text-emerald-600' : active ? 'text-primary-600' : 'text-gray-400'}`}>{title}</p>
+      <p className="text-xs text-gray-500">{status}</p>
+    </div>
+  </div>
+);
+
+const ClientInvoicesView: React.FC<{ user: User; lang: UiLang }> = ({ user, lang }) => {
+  const [data, setData] = useState<Invoice[]>([]);
+  const [paying, setPaying] = useState<string | null>(null);
+  useEffect(() => {
+    void (async () => {
+      try {
+        const rows = await RealAPI.getInvoices();
+        setData(rows.map(invoiceFromBackend));
+      } catch {
+        setData([]);
+      }
+    })();
+  }, [user]);
+
+  const onPay = async (id: string) => {
+    setPaying(id);
+    try {
+      await RealAPI.payInvoice(id);
+      const rows = await RealAPI.getInvoices();
+      setData(rows.map(invoiceFromBackend));
+      notifyFinopsDataChanged();
+    } finally {
+      setPaying(null);
+    }
+  };
+
+  return (
+    <div className="space-y-6">
+      <PageHeader title={t('page.clientInvoices.title', lang)} description={t('page.clientInvoices.desc', lang)} />
+      <Card className="overflow-hidden">
+        <table className="w-full text-left">
+          <thead className="bg-gray-50 dark:bg-gray-800/50 border-b border-gray-100 dark:border-gray-800">
+            <tr>
+              <th className="px-6 py-3.5 text-xs font-semibold text-gray-500 uppercase tracking-wider">{t('page.clientInv.document', lang)}</th>
+              <th className="px-6 py-3.5 text-xs font-semibold text-gray-500 uppercase tracking-wider text-right">{t('page.clientInv.amount', lang)}</th>
+              <th className="px-6 py-3.5 text-xs font-semibold text-gray-500 uppercase tracking-wider text-right">{t('page.clientInv.action', lang)}</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-gray-100 dark:divide-gray-800">
+            {data.map(inv => (
+              <tr key={inv.id} className="hover:bg-gray-50/50 dark:hover:bg-gray-800/30 transition-colors">
+                <td className="px-6 py-4">
+                  <p className="font-semibold text-sm text-gray-900 dark:text-white">{inv.number}</p>
+                  <p className="text-xs text-gray-400">{t('page.clientInv.due', lang)} {inv.dueDate}</p>
+                </td>
+                <td className="px-6 py-4 font-bold text-right text-gray-900 dark:text-white">{inv.total.toLocaleString(localeForLang(lang))} €</td>
+                <td className="px-6 py-4 text-right">
+                  {inv.status === 'Paid' ? (
+                    <Badge variant="success"><PackageCheck size={12} /> {t('page.clientInv.paid', lang)}</Badge>
+                  ) : (
+                    <PrimaryButton onClick={() => onPay(inv.id)} loading={paying === inv.id} className="px-4 py-2 text-xs">{t('page.clientInv.pay', lang)}</PrimaryButton>
+                  )}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </Card>
+    </div>
+  );
+};
+
+const ClientProjectsView: React.FC<{ lang: UiLang }> = ({ lang }) => (
+  <div className="space-y-6">
+    <PageHeader title={t('page.projects.title', lang)} description={t('page.projects.desc', lang)} />
+    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+      <Card className="p-8 text-center">
+        <div className="w-14 h-14 bg-emerald-50 dark:bg-emerald-900/20 text-emerald-500 rounded-2xl flex items-center justify-center mx-auto mb-4"><CheckCircle2 size={28} /></div>
+        <h2 className="text-lg font-bold text-gray-900 dark:text-white mb-2">Phase 1 : Conformité</h2>
+        <p className="text-sm text-gray-500 mb-4">Cadres réglementaires établis et vérifiés.</p>
+        <div className="w-full bg-gray-100 dark:bg-gray-800 h-2 rounded-full overflow-hidden"><div className="w-full bg-emerald-500 h-full rounded-full"></div></div>
+      </Card>
+      <Card className="p-8 text-center">
+        <div className="w-14 h-14 bg-blue-50 dark:bg-blue-900/20 text-blue-500 rounded-2xl flex items-center justify-center mx-auto mb-4"><Clock size={28} /></div>
+        <h2 className="text-lg font-bold text-gray-900 dark:text-white mb-2">Phase 2 : Intégration Cloud</h2>
+        <p className="text-sm text-gray-500 mb-4">Connexion des API avec l'environnement FinOps.</p>
+        <div className="w-full bg-gray-100 dark:bg-gray-800 h-2 rounded-full overflow-hidden"><div className="w-[65%] bg-blue-500 h-full rounded-full"></div></div>
+      </Card>
+    </div>
+  </div>
+);
+
+const ClientSupportView: React.FC<{ lang: UiLang }> = ({ lang }) => (
+  <div className="max-w-4xl mx-auto space-y-6">
+    <div className="bg-gradient-to-br from-primary-600 to-primary-700 p-8 sm:p-10 rounded-2xl text-white shadow-xl shadow-primary-600/15 flex flex-col md:flex-row items-center gap-8">
+      <div className="w-24 h-24 bg-white/15 rounded-2xl flex items-center justify-center shrink-0 backdrop-blur-sm border border-white/20">
+        <MessageSquare size={40} />
+      </div>
+      <div>
+        <h1 className="text-2xl font-bold mb-2">{t('page.support.title', lang)}</h1>
+        <p className="text-primary-100 mb-6">{t('page.support.subtitle', lang)}</p>
+        <PrimaryButton onClick={() => {}} variant="outline" className="bg-white text-primary-600 border-0 px-6 py-3 text-sm hover:bg-primary-50">
+          {t('page.support.ticket', lang)}
+        </PrimaryButton>
+      </div>
+    </div>
+    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+      <Card className="p-6">
+        <h3 className="font-bold text-gray-900 dark:text-white mb-4">{t('page.support.docs', lang)}</h3>
+        <div className="space-y-2">
+          {['Guide de facturation', 'Conditions SLA', 'Spécifications API'].map(title => (
+            <div key={title} className="flex items-center justify-between p-3 bg-gray-50 dark:bg-gray-800 rounded-xl hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors cursor-pointer group">
+              <span className="font-medium text-sm text-gray-700 dark:text-gray-300 group-hover:text-primary-600">{title}</span>
+              <ExternalLink size={14} className="text-gray-400 group-hover:text-primary-600" />
+            </div>
+          ))}
+        </div>
+      </Card>
+      <Card className="p-6 flex flex-col items-center justify-center text-center">
+        <div className="flex items-center gap-2 text-emerald-500 font-bold mb-2">
+          <div className="w-2.5 h-2.5 bg-emerald-500 rounded-full animate-pulse"></div>
+          {t('page.support.online', lang)}
+        </div>
+        <p className="text-xs text-gray-400">Disponibilité : 99.99%</p>
+      </Card>
+    </div>
+  </div>
+);
+
+export default App;
