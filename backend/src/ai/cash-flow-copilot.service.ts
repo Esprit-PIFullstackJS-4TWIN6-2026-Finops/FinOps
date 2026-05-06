@@ -4,6 +4,7 @@ import { Repository } from 'typeorm';
 import { Expense } from '../entities/expense.entity';
 import { InvoiceRecord } from '../entities/invoice-record.entity';
 import { Transaction, TransactionType } from '../entities/transaction.entity';
+import { trainDenseTimeSeriesRegressor } from './ml-time-series.util';
 import {
   CashFlowCopilotAction,
   CashFlowCopilotDto,
@@ -79,10 +80,12 @@ export class CashFlowCopilotService {
       };
     });
 
+    const inflowSeries = historical.map((point) => point.inflows);
+    const outflowSeries = historical.map((point) => point.outflows);
     const avgInflow = this.average(historical.slice(-3).map((point) => point.inflows));
     const avgOutflow = this.average(historical.slice(-3).map((point) => point.outflows));
-    const inflowSlope = this.slope(historical.map((point) => point.inflows));
-    const outflowSlope = this.slope(historical.map((point) => point.outflows));
+    const inflowSlope = this.slope(inflowSeries);
+    const outflowSlope = this.slope(outflowSeries);
 
     const outstandingWeights = new Map<string, number>();
     let overdueReceivables = 0;
@@ -110,17 +113,36 @@ export class CashFlowCopilotService {
       ).toFixed(2),
     );
 
+    const inflowModel = await trainDenseTimeSeriesRegressor(inflowSeries, {
+      horizon: horizonMonths,
+      requestedWindowSize: Math.min(4, Math.max(3, inflowSeries.length - 1)),
+      minimumWindowSize: 3,
+      epochs: 55,
+    });
+    const outflowModel = await trainDenseTimeSeriesRegressor(outflowSeries, {
+      horizon: horizonMonths,
+      requestedWindowSize: Math.min(4, Math.max(3, outflowSeries.length - 1)),
+      minimumWindowSize: 3,
+      epochs: 55,
+    });
+
+    const baseProjectedInflows =
+      inflowModel.status === 'trained'
+        ? inflowModel.predictedValues
+        : this.buildFallbackSeriesProjection(inflowSeries, horizonMonths, avgInflow, inflowSlope);
+    const baseProjectedOutflows =
+      outflowModel.status === 'trained'
+        ? outflowModel.predictedValues
+        : this.buildFallbackSeriesProjection(outflowSeries, horizonMonths, avgOutflow, outflowSlope);
+
     let runningCash = openingCashEstimate;
-    const futurePeriods = this.buildPeriods(horizonMonths, 1, currentPeriod);
+    const futurePeriods = this.buildFuturePeriods(horizonMonths, currentPeriod);
     const timeline: CashFlowCopilotPoint[] = futurePeriods.map((period, index) => {
       const projectedInflows = Number(
-        Math.max(
-          0,
-          avgInflow + inflowSlope * (index + 1) * 0.6 + (outstandingWeights.get(period) || 0),
-        ).toFixed(2),
+        Math.max(0, baseProjectedInflows[index] + (outstandingWeights.get(period) || 0)).toFixed(2),
       );
       const projectedOutflows = Number(
-        Math.max(0, avgOutflow + outflowSlope * (index + 1) * 0.5).toFixed(2),
+        Math.max(0, baseProjectedOutflows[index]).toFixed(2),
       );
       const netCashFlow = Number((projectedInflows - projectedOutflows).toFixed(2));
       runningCash = Number((runningCash + netCashFlow).toFixed(2));
@@ -204,17 +226,28 @@ export class CashFlowCopilotService {
     const monthsWithSignals = historical.filter(
       (point) => point.inflows > 0 || point.outflows > 0,
     ).length;
+    const structuralConfidence = Math.max(
+      0.35,
+      Math.min(
+        0.92,
+        0.42 +
+          monthsWithSignals * 0.03 +
+          (hasIncomeTransactions ? 0.08 : 0.03) +
+          (invoices.some((invoice) => invoice.status !== 'Draft') ? 0.05 : 0),
+      ),
+    );
+    const modelConfidence =
+      inflowModel.status === 'trained' && outflowModel.status === 'trained'
+        ? (inflowModel.confidence + outflowModel.confidence) / 2
+        : inflowModel.status === 'trained'
+          ? inflowModel.confidence
+          : outflowModel.status === 'trained'
+            ? outflowModel.confidence
+            : 0;
     const confidence = Number(
-      Math.max(
-        0.35,
-        Math.min(
-          0.92,
-          0.42 +
-            monthsWithSignals * 0.03 +
-            (hasIncomeTransactions ? 0.08 : 0.03) +
-            (invoices.some((invoice) => invoice.status !== 'Draft') ? 0.05 : 0),
-        ),
-      ).toFixed(2),
+      (modelConfidence > 0
+        ? Math.min(0.95, (structuralConfidence + modelConfidence) / 2)
+        : structuralConfidence).toFixed(2),
     );
 
     const strongestMonth = [...timeline].sort((a, b) => b.netCashFlow - a.netCashFlow)[0];
@@ -226,6 +259,7 @@ export class CashFlowCopilotService {
       netTrend,
       confidence,
       summary:
+        `${inflowModel.status === 'trained' || outflowModel.status === 'trained' ? 'Internal ML cash-flow models trained on recent monthly series. ' : ''}` +
         `Projected ${horizonMonths}-month cash flow is ${netTrend}. ` +
         `Best month: ${strongestMonth?.period || 'n/a'} (${strongestMonth?.netCashFlow.toFixed(2) || '0.00'}). ` +
         `Most constrained month: ${weakestMonth?.period || 'n/a'} (${weakestMonth?.netCashFlow.toFixed(2) || '0.00'}).`,
@@ -256,6 +290,35 @@ export class CashFlowCopilotService {
       periods.push(cursor.toISOString().slice(0, 7));
     }
     return periods;
+  }
+
+  private buildFuturePeriods(count: number, currentPeriod: string): string[] {
+    const [year, month] = currentPeriod.split('-').map((value) => Number(value));
+    const base = new Date(Date.UTC(year, month - 1, 1));
+    const periods: string[] = [];
+
+    for (let index = 1; index <= count; index += 1) {
+      const cursor = new Date(base);
+      cursor.setUTCMonth(base.getUTCMonth() + index);
+      periods.push(cursor.toISOString().slice(0, 7));
+    }
+
+    return periods;
+  }
+
+  private buildFallbackSeriesProjection(
+    series: number[],
+    horizon: number,
+    averageValue: number,
+    slope: number,
+  ): number[] {
+    if (!series.length) {
+      return Array.from({ length: horizon }, () => 0);
+    }
+
+    return Array.from({ length: horizon }, (_, index) =>
+      Number(Math.max(0, averageValue + slope * (index + 1) * 0.6).toFixed(2)),
+    );
   }
 
   private average(values: number[]): number {

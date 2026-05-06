@@ -2467,12 +2467,12 @@ const AIEmbeddedMlForecastPanel: React.FC<{ lang: UiLang }> = ({ lang }) => {
       <div className="flex items-center justify-between mb-4 gap-3">
         <div>
           <h3 className="font-bold text-gray-900 dark:text-white">
-            {isFr ? 'Prévision ML embarquée' : 'Embedded ML forecast'}
+            {isFr ? 'Prévision intelligente des dépenses' : 'Intelligent expense forecast'}
           </h3>
           <p className="text-sm text-gray-500 dark:text-gray-400">
             {isFr
-              ? 'Modèle TensorFlow.js entraîné directement dans le backend sur vos données de dépenses.'
-              : 'TensorFlow.js model trained directly inside the backend on your expense history.'}
+              ? 'Projection des dépenses futures à partir de l’historique financier de l’entreprise.'
+              : 'Forecast of future expenses based on the company financial history.'}
           </p>
         </div>
         <PrimaryButton type="button" variant="outline" className="px-3 py-2 text-xs" onClick={() => void load()} loading={loading}>
@@ -2484,55 +2484,37 @@ const AIEmbeddedMlForecastPanel: React.FC<{ lang: UiLang }> = ({ lang }) => {
 
       {data ? (
         <div className="space-y-5">
-          <div className="flex flex-wrap gap-2">
-            <Badge variant="info">{data.framework}</Badge>
-            <Badge variant="success">{data.modelType}</Badge>
-            <Badge variant={data.modelStatus === 'trained' ? 'success' : 'warning'}>
-              {data.modelStatus === 'trained'
-                ? isFr
-                  ? 'Modèle entraîné'
-                  : 'Model trained'
-                : isFr
-                  ? 'Données insuffisantes'
-                  : 'Insufficient data'}
-            </Badge>
-          </div>
-
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             <div className="rounded-xl bg-gray-50 dark:bg-gray-800/60 p-3">
               <p className="text-[11px] text-gray-500 uppercase tracking-wider">
-                {isFr ? 'Prochaine prédiction' : 'Next prediction'}
+                {isFr ? 'Prochaine estimation' : 'Next estimate'}
               </p>
               <p className="text-lg font-bold text-gray-900 dark:text-white">{money(data.predictedNextStepExpense)}</p>
             </div>
             <div className="rounded-xl bg-gray-50 dark:bg-gray-800/60 p-3">
               <p className="text-[11px] text-gray-500 uppercase tracking-wider">
-                {isFr ? 'Total horizon' : 'Horizon total'}
+                {isFr ? 'Projection sur l’horizon' : 'Forecast over horizon'}
               </p>
               <p className="text-lg font-bold text-gray-900 dark:text-white">{money(data.predictedHorizonTotal)}</p>
             </div>
             <div className="rounded-xl bg-gray-50 dark:bg-gray-800/60 p-3">
               <p className="text-[11px] text-gray-500 uppercase tracking-wider">
-                {isFr ? 'Confiance du modèle' : 'Model confidence'}
+                {isFr ? 'Fiabilité estimée' : 'Estimated reliability'}
               </p>
               <p className="text-lg font-bold text-gray-900 dark:text-white">{Math.round(data.confidence * 100)}%</p>
             </div>
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div className="rounded-xl border border-gray-100 dark:border-gray-800 p-3">
               <p className="text-[11px] text-gray-500 uppercase tracking-wider">
-                {isFr ? 'Échantillons train' : 'Training samples'}
+                {isFr ? 'Observations analysées' : 'Observations analyzed'}
               </p>
               <p className="text-base font-semibold text-gray-900 dark:text-white">{data.trainingSamples}</p>
             </div>
             <div className="rounded-xl border border-gray-100 dark:border-gray-800 p-3">
-              <p className="text-[11px] text-gray-500 uppercase tracking-wider">RMSE</p>
-              <p className="text-base font-semibold text-gray-900 dark:text-white">{money(data.rmse)}</p>
-            </div>
-            <div className="rounded-xl border border-gray-100 dark:border-gray-800 p-3">
               <p className="text-[11px] text-gray-500 uppercase tracking-wider">
-                {isFr ? 'Granularité' : 'Granularity'}
+                {isFr ? 'Base d’analyse' : 'Analysis basis'}
               </p>
               <p className="text-base font-semibold text-gray-900 dark:text-white">
                 {data.seriesGranularity === 'daily_aggregated'
@@ -2545,8 +2527,6 @@ const AIEmbeddedMlForecastPanel: React.FC<{ lang: UiLang }> = ({ lang }) => {
               </p>
             </div>
           </div>
-
-          <p className="text-sm text-gray-600 dark:text-gray-300">{data.explanation}</p>
 
           {data.timeline.length > 0 ? (
             <div className="h-[180px]">
@@ -2561,16 +2541,16 @@ const AIEmbeddedMlForecastPanel: React.FC<{ lang: UiLang }> = ({ lang }) => {
               </ResponsiveContainer>
             </div>
           ) : (
-            <div className="rounded-xl bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-900/40 px-4 py-3 text-sm text-amber-700 dark:text-amber-200">
+            <div className="rounded-xl bg-gray-50 dark:bg-gray-800/60 px-4 py-3 text-sm text-gray-600 dark:text-gray-300">
               {isFr
-                ? 'Ajoutez davantage de dépenses historisées pour permettre l’entraînement du modèle embarqué.'
-                : 'Add more historical expenses to let the embedded model train reliably.'}
+                ? 'Historique insuffisant pour afficher une projection détaillée pour le moment.'
+                : 'There is not enough history yet to display a detailed forecast.'}
             </div>
           )}
         </div>
       ) : (
         <p className="text-sm text-gray-500">
-          {isFr ? 'Prévision ML indisponible pour le moment.' : 'Embedded ML forecast is currently unavailable.'}
+          {isFr ? 'Prévision indisponible pour le moment.' : 'Forecast is currently unavailable.'}
         </p>
       )}
     </Card>

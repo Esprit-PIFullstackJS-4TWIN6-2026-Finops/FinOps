@@ -5,7 +5,9 @@ Multitenant financial operations platform with a NestJS backend and a React + Vi
 ## Embedded AI feature
 
 - Embedded ML expense forecast powered by a TensorFlow.js model trained inside the backend on company expense history.
-- Available through the AI dashboard and the `/ai/embedded-ml-forecast` API endpoint.
+- Embedded monthly financial forecast model powering the `/ai/forecast` endpoint and the financial forecast dashboard card.
+- Embedded cash-flow projection models powering the `/ai/cash-flow-copilot` endpoint with learned inflow and outflow projections.
+- Available through the AI dashboard and the `/ai/embedded-ml-forecast`, `/ai/forecast`, and `/ai/cash-flow-copilot` API endpoints.
 
 ## Live deployment
 

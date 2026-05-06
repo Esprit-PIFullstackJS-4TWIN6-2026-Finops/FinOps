@@ -31,6 +31,7 @@ import { SmartDocumentIntakeDto, SmartDocumentIntakeResult } from './dto/invoice
 import { InvoiceAiExtractionService } from './invoice-ai/invoice-ai-extraction.service';
 import { CashFlowCopilotService } from './cash-flow-copilot.service';
 import { EmbeddedMlForecastService } from './embedded-ml-forecast.service';
+import { ExpenseForecastMlService } from './expense-forecast-ml.service';
 
 @ApiTags('AI Analytics')
 @ApiBearerAuth()
@@ -41,6 +42,7 @@ export class AiController {
     private readonly invoiceAiExtractionService: InvoiceAiExtractionService,
     private readonly cashFlowCopilotService: CashFlowCopilotService,
     private readonly embeddedMlForecastService: EmbeddedMlForecastService,
+    private readonly expenseForecastMlService: ExpenseForecastMlService,
   ) {}
 
   @Get('insights')
@@ -86,7 +88,7 @@ export class AiController {
   @Roles(UserRole.PLATFORM_ADMIN, UserRole.OWNER, UserRole.MANAGER, UserRole.ACCOUNTANT)
   @ApiOperation({ summary: 'Forecast future expenses from historical data' })
   forecast(@CurrentUser() user: User, @Body() payload: ForecastDto): Promise<ForecastResult> {
-    return this.aiService.forecast(user.activeCompanyId || user.companyId!, payload);
+    return this.expenseForecastMlService.generate(user.activeCompanyId || user.companyId!, payload);
   }
 
   @Post('smart-intake')
